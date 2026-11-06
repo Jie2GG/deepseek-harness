@@ -118,6 +118,19 @@ Both fields state a claim about your endpoint rather than checking it. A model t
 
 ### DeepSeek account models
 
+The shipped profiles mount the DeepSeek account plugins disabled. To sign in with a DeepSeek account and reach the account model route, add this snippet to `$DSH_HOME/profiles/<profile>/cordis.patch.yml` and restart:
+
+```yaml
+- id: deepseek-account
+  disabled: false
+- id: llm-deepseek-account
+  disabled: false
+- id: account-controller
+  disabled: false
+- id: ui-settings-account
+  disabled: false
+```
+
 A signed-in DeepSeek account lists its models from the account service, so the Models page offers no model editor for it. Adjust a single model with `modelOverrides` in `$DSH_HOME/profiles/<profile>/cordis.patch.yml`; the fields match a DeepSeek `models` entry, and unset fields keep the listed values:
 
 ```yaml

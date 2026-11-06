@@ -2,12 +2,16 @@
 # Platform double. The scaffold substitutes {{origin}} after the listener binds,
 # so no port is ever committed here. No notice timing is overridden: every read
 # comes from the product's own startup and settings-refresh paths.
+# The bundle layer disables the account plugins, so both entries are
+# re-enabled here.
 - id: deepseek-account
+  disabled: false
   config:
     platformOrigin: "{{origin}}"
     allowLoopbackHttp: true
 # This scenario exercises the account launcher after initial setup.
 - id: ui-settings-account
+  disabled: false
   config:
     step: done
     completion: completed

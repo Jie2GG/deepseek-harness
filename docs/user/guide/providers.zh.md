@@ -118,6 +118,19 @@ DeepSeek 将省略的 `inputModalities` 视为纯文本，并拒绝空列表。�
 
 ### DeepSeek 账号的模型
 
+随发布的 profile 默认把 DeepSeek 账号相关插件挂载为关闭。要用 DeepSeek 账号登录并使用账号模型路由，把下面片段写入 `$DSH_HOME/profiles/<profile>/cordis.patch.yml` 并重启：
+
+```yaml
+- id: deepseek-account
+  disabled: false
+- id: llm-deepseek-account
+  disabled: false
+- id: account-controller
+  disabled: false
+- id: ui-settings-account
+  disabled: false
+```
+
 已登录 DeepSeek 账号的模型列表来自账号服务，因此模型页不为它提供模型编辑器。要调整单个模型，在 `$DSH_HOME/profiles/<profile>/cordis.patch.yml` 中使用 `modelOverrides`；字段与 DeepSeek 的 `models` 条目相同，未设置的字段沿用列表中的值：
 
 ```yaml
