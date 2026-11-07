@@ -25,6 +25,7 @@ export const inboxProjectionSchema = z.object({
 /** Standard fold that reconstructs pending input and rejects invalid durable splice history. */
 export const inboxProjectionDefinition = {
   key: 'inbox',
+  rewindable: true,
   stateSchema: inboxProjectionSchema,
   init: (): InboxState => ({ 'next-turn': [], 'next-step': [] }),
   apply(state: InboxState, event) {

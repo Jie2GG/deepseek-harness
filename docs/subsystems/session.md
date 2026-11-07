@@ -412,8 +412,31 @@ interface SessionSurface {
   readonly replaceGeneration: number
   /** Monotonic count of committed replacements and plugin-owned message changes. */
   readonly contentGeneration: number
+  /** Human-message edits committed so far, in event order. */
+  readonly edits: readonly MessageEditWindow[]
 }
 ```
+
+```ts type-equiv
+/** One committed in-place rewrite of a sent human message and the log range it voids. */
+interface MessageEditWindow {
+  /** Seq of the replacement copy that recorded the edit. */
+  readonly editSeq: SessionSeq
+  /** Seq of the human message the user rewrote. */
+  readonly editedSeq: SessionSeq
+  /** Inclusive first voided log seq: the edited message itself. */
+  readonly startSeq: SessionSeq
+  /**
+   * Exclusive end of the voided log range. The edit voids history up to the
+   * turn that carries it, so that turn's own boundary events stay durable and
+   * counted; when the replacement copy opens no later turn, this is the copy's
+   * own seq.
+   */
+  readonly endSeqExclusive: SessionSeq
+}
+```
+
+A rewrite records one `user/message` replacement copy whose source names the edited message, so the model continues from the corrected sentence while the log keeps the discarded turns readable by position. `messageEditWindows(events)` reads these ranges without folding the surface, and `isVoidedByMessageEdit(windows, seq)` answers whether one event still contributes. Projection units that rewind their conversation-derived state use that pair; see [Session projections](session-projection.md).
 
 ### `SurfaceFoldReplacement` and `SurfaceFoldResult` — a complete surface replay
 
@@ -442,6 +465,8 @@ interface SurfaceFoldResult {
   replacements: SurfaceFoldReplacement[]
   /** Immutable projected messages, keyed by their original event sequences. */
   projectedMessages: ReadonlyMap<SessionSeq, Message>
+  /** Human-message edits in event order; each voids its own log range. */
+  edits: MessageEditWindow[]
 }
 ```
 
@@ -942,6 +967,16 @@ workspaceDesktop(): { name: string; available: boolean; fileManager: 'finder' | 
  * @returns the accepted title and durable event sequence.
  */
 @Remote('rename') rename(request: SessionRenameRequest): Promise<SessionRenameValue>
+
+/**
+ * Rewrite one sent human message, voiding the history after it, and ask again
+ * with the corrected text. The Session must be idle: an in-flight turn is
+ * stopped first.
+ * @param request - Session identity, target surface seq, and rewritten blocks.
+ * @returns the preserved message identity, shadowed node count, and cleared
+ *   pending-item count, or the `session/edit-rejected` business error.
+ */
+@Remote('editMessage') editMessage(request: SessionEditMessageRequest): Promise<SessionEditMessageValue>
 
 /**
  * Fork one cold-readable exact event prefix into a new Session. An omitted

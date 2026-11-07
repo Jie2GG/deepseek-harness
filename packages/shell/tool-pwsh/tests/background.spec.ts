@@ -224,6 +224,7 @@ describe('owned background output (pwsh)', () => {
       inject: () => {},
       cancel: () => {},
       runMaintenance: task => task(new AbortController().signal),
+      editMessage: () => { throw new Error('unused stub Agent editMessage') },
       whenIdle: () => Promise.resolve(),
     }
     ctx.agents.register(owner)
@@ -427,6 +428,7 @@ describe('foreground commands as jobs (pwsh)', () => {
       inject: () => {},
       cancel: () => {},
       runMaintenance: task => task(new AbortController().signal),
+      editMessage: () => { throw new Error('unused stub Agent editMessage') },
       whenIdle: () => Promise.resolve(),
     }
     ctx.agents.register(owner)

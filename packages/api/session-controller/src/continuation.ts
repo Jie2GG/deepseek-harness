@@ -25,6 +25,7 @@ const EMPTY: ContinuationState = { admitted: false, failedAttempt: false, ending
 /** Eligibility requires admitted human work and a failed settlement in the last request step. */
 export const continuationProjectionDefinition = {
   key: 'conversationContinuation',
+  rewindable: true,
   stateVersion: 4,
   stateSchema,
   init: (): ContinuationState => EMPTY,

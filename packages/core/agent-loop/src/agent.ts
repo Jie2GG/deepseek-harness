@@ -15,22 +15,28 @@ import type {
   ModelSelectionProjectionState,
   InboxTarget,
   InboxState,
+  MessageEditRequest,
+  MessageEditResult,
   PreStepDecision,
   RequestErrorAction,
 } from '@deepseek-ai/dsh-agent'
-import { AgentModel, agentEvents, assembleContextFor } from '@deepseek-ai/dsh-agent'
+import { AgentModel, MessageEditError, agentEvents, assembleContextFor } from '@deepseek-ai/dsh-agent'
 import type { GenerateOptions, LlmCallConfig, Message, PreparedLlmCall } from '@deepseek-ai/dsh-llm'
 import {
   LlmError,
   createAssistantMessage,
   createDeveloperMessage,
   errorChain,
+  freezeMessage,
   markAgentLoopRequest,
 } from '@deepseek-ai/dsh-llm'
-import { assertNever, deepFreeze } from '@deepseek-ai/dsh-util-values'
+import { assertNever, deepEqualJson, deepFreeze } from '@deepseek-ai/dsh-util-values'
 import type { Scope } from '@deepseek-ai/dsh-scope'
 import { createScope } from '@deepseek-ai/dsh-scope'
-import type { EpochHeader, RequestContext, Session, SessionId, SessionSeq, TurnEndReason, UserMessage } from '@deepseek-ai/dsh-session'
+import type {
+  EpochHeader, RequestContext, Session, SessionId, SessionSeq, SurfaceIntent, TurnEndReason,
+  UserMessage, UserMessageEditSource,
+} from '@deepseek-ai/dsh-session'
 import { canonicalHeader, headerEquals, ToolCallRecovery } from '@deepseek-ai/dsh-session'
 import { joinContextSections, renderContextSections, renderPrompt } from '@deepseek-ai/dsh-system-prompt'
 import type { PromptAssembly } from '@deepseek-ai/dsh-system-prompt'
@@ -186,6 +192,93 @@ export class ReactLoopAgent implements Agent {
 
   inject(input: UserMessage): void {
     this.send(input, 'next-step', false)
+  }
+
+  editMessage(request: MessageEditRequest): MessageEditResult {
+    if (this.phase.kind !== 'idle') {
+      throw new MessageEditError(
+        `agent "${this.id}" is running: cancel the turn before editing a sent message`,
+        'MESSAGE_EDIT_TURN_RUNNING',
+      )
+    }
+    const nodes = this.session.surface.nodes
+    const position = nodes.indexOf(request.targetSeq)
+    if (position === -1) {
+      throw new MessageEditError(
+        `session "${this.id}" has no current surface node ${request.targetSeq}: it never entered model history, or an earlier edit already replaced it`,
+        'MESSAGE_EDIT_TARGET_NOT_ON_SURFACE',
+      )
+    }
+    // oxlint-disable-next-line typescript/no-deprecated -- Existing Session history read; migration deferred.
+    const recorded = this.session.eventAt(request.targetSeq)
+    const target = recorded?.type === 'user/message' ? recorded : undefined
+    const source = target?.data.source
+    if (target === undefined || source === undefined
+      || (source.kind !== 'user' && source.kind !== 'user-edit')) {
+      throw new MessageEditError(
+        `session "${this.id}" event ${request.targetSeq} is not a sent human message: model answers, tool results, and injected context keep their recorded text`,
+        'MESSAGE_EDIT_TARGET_NOT_USER',
+      )
+    }
+    if (!request.content.some(block => block.type !== 'text' || block.text.trim() !== '')) {
+      throw new MessageEditError(
+        `session "${this.id}" edit of ${request.targetSeq} needs non-whitespace text or an attachment`,
+        'MESSAGE_EDIT_CONTENT_EMPTY',
+      )
+    }
+    // An edit rewrites the sentences of a message that was already admitted: its
+    // attachments are durable facts of that submission. Requiring every non-text
+    // block to appear unchanged keeps the edit from smuggling in an upload that
+    // never passed prompt admission.
+    const original = target.data.content.filter(block => block.type !== 'text')
+    for (const block of request.content) {
+      if (block.type === 'text') continue
+      if (!original.some(kept => deepEqualJson(kept, block))) {
+        throw new MessageEditError(
+          `session "${this.id}" edit of ${request.targetSeq} adds an attachment the message never carried`,
+          'MESSAGE_EDIT_ATTACHMENT_NEW',
+        )
+      }
+    }
+    const clearedQueueCount = this.inbox.nextStep.length + this.inbox.nextTurn.length
+    if (clearedQueueCount > 0) this.inbox.clear()
+    const message = freezeMessage<UserMessage>({
+      id: target.data.id,
+      role: 'user',
+      content: request.content,
+      source: {
+        kind: 'user-edit',
+        editedSeq: request.targetSeq,
+        editCount: source.kind === 'user-edit' ? source.editCount + 1 : 1,
+      },
+    })
+    this.send(message, 'next-turn', true)
+    return { messageId: message.id, shadowedNodeCount: nodes.length - position, clearedQueueCount }
+  }
+
+  /**
+   * Positional intent that voids the edited message and everything after it.
+   * The range resolves at append time because the step may have consolidated a
+   * system node or admitted context first, and any of that is history the edit
+   * replaces.
+   * @param source - the queued rewrite's durable edit identity.
+   * @returns the replacement marker with complete shadowed-node coverage.
+   * @throws {MessageEditError} when another writer shadowed the target meanwhile.
+   */
+  private editSurfaceIntent(source: UserMessageEditSource): SurfaceIntent<'user/message'> {
+    const nodes = this.session.surface.nodes
+    const position = nodes.indexOf(source.editedSeq)
+    const tail = nodes.at(-1)
+    if (position === -1 || tail === undefined) {
+      throw new MessageEditError(
+        `session "${this.id}" no longer carries the edited message ${source.editedSeq}: another rewrite claimed it first`,
+        'MESSAGE_EDIT_TARGET_NOT_ON_SURFACE',
+      )
+    }
+    return {
+      surfaceOp: { op: 'replace', startSeq: source.editedSeq, endSeq: tail },
+      sourceEventSeqs: nodes.slice(position),
+    }
   }
 
   cancel(cause: AgentCancelCause, options: CancelOptions = {}): void {
@@ -467,6 +560,8 @@ export class ReactLoopAgent implements Agent {
               this.session.append('user/message', context, { surfaceOp: 'append' })
               contextAdmitted = true
             }
+          } else if (message.source.kind === 'user-edit') {
+            this.session.append('user/message', message, this.editSurfaceIntent(message.source))
           } else {
             this.session.append('user/message', message, { surfaceOp: 'append' })
           }

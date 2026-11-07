@@ -101,6 +101,7 @@ function stubAgent(id: string, delegationDepth = 0, origin?: 'subagent'): Agent 
     ctx: new Context(),
     send() {}, followup() {}, steer() {}, inject() {}, cancel() {},
     runMaintenance: task => task(new AbortController().signal),
+    editMessage: () => { throw new Error('unused stub Agent editMessage') },
     whenIdle: () => Promise.resolve(),
   }
   return agent

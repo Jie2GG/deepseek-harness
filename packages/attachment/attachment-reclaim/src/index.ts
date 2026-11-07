@@ -22,6 +22,7 @@ import pLimit from 'p-limit'
 import { AttachmentId } from '@deepseek-ai/dsh-attachment'
 import type { AttachmentDiscardResult } from '@deepseek-ai/dsh-attachment'
 import type { Session, SessionEvent, SessionId } from '@deepseek-ai/dsh-session'
+import { isUserMessageEdit, isVoidedByMessageEdit, messageEditWindows } from '@deepseek-ai/dsh-session/surface'
 // Type-only: pulls the SessionPersistence service merge (ctx.sessionPersistence).
 import type {} from '@deepseek-ai/dsh-session-persistence'
 import type { SessionDeletedNotice } from '@deepseek-ai/dsh-workspace'
@@ -226,7 +227,12 @@ export class AttachmentReferences extends Service {
       const handle = await this.ctx.sessionPersistence.open(snapshot.header.id, 'read')
       try {
         const { events } = await handle.read()
+        // An edit voids its message and everything after it, so a rewritten-away
+        // attachment is no longer held by this Session even though its event stays
+        // readable by position.
+        const edits = messageEditWindows(events)
         for (const event of events) {
+          if (isVoidedByMessageEdit(edits, event.seq)) continue
           for (const id of collectAttachmentIds(event)) {
             const digest = digestOf(id)
             const owners = holders.get(digest) ?? new Set<SessionId>()
@@ -349,6 +355,12 @@ export class AttachmentReferences extends Service {
       this.noteSaved(id)
     }), 'attachmentReclaim.claims')
     this.ctx.effect(() => this.ctx.on('session/event', (session: Session, event: SessionEvent) => {
+      if (isUserMessageEdit(event)) {
+        // A rewrite can drop an attachment. Only a rebuild over the surviving
+        // ranges can compute the exact reference set, so mark the ledger
+        // untrusted; the next pass rebuilds before it removes anything.
+        this.built = false
+      }
       const ids = collectAttachmentIds(event)
       if (ids.length === 0) return
       // The event is already committed, so a lost record cannot cost a Session

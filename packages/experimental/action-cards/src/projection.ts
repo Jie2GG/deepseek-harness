@@ -68,7 +68,7 @@ export type ActionCardProjectionDefinition = Omit<ProjectionDefinition<'actionCa
  * Events inherited by a forked Session create no proposals or decisions.
  */
 export const actionCardProjection: ActionCardProjectionDefinition = {
-  key: 'actionCards', stateVersion: 2, stateSchema,
+  key: 'actionCards', stateVersion: 2, rewindable: true, stateSchema,
   init: (_header, inheritedEventCount) => ({
     inheritedEventCount, view: { proposals: {}, decisions: {} }, calls: {}, admittedTurn: null, pendingStatus: {}, queued: 0,
   }),

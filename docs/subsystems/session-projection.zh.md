@@ -73,6 +73,18 @@ interface ProjectionDefinition<K extends string, S> {
    * @returns the next state (same reference when the event is not the unit's).
    */
   apply(state: NoInfer<S>, event: SessionEvent): NoInfer<S>
+  /**
+   * Whether a human-message edit rewinds this unit. When true, events inside an
+   * edit's voided range contribute nothing to the value: the unit's state equals
+   * what the log folded to immediately before the rewritten message, then
+   * replays forward from the edit. Use true for state a rewritten conversation
+   * re-creates — task lists, goals, team boards. Leave false for settings the
+   * conversation does not own, such as the effective directory, permission
+   * preset, selected model, turn numbering, titles, and metering: an edit to an
+   * earlier sentence does not undo a later choice the user still holds.
+   * @default false
+   */
+  rewindable?: boolean
   /** Client view. Omit for host-only units. */
   wire?: K extends keyof SessionProjectionMap ? {
     /** Validates the wire payload before it leaves the host. */

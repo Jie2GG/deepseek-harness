@@ -60,6 +60,7 @@ async function agent(ctx: Context, cwd: string): Promise<Agent> {
     inject: () => {},
     cancel() {},
     runMaintenance: task => task(new AbortController().signal),
+    editMessage: () => { throw new Error('unused stub Agent editMessage') },
     whenIdle: () => Promise.resolve(),
   }
   await ctx.agents.register(value)

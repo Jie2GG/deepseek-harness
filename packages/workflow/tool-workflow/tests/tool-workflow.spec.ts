@@ -465,6 +465,7 @@ describe('dsh-tool-workflow', () => {
         id: session.id, options: {}, session, model: unsupportedModel(),
         inbox: createInboxStub(), status: 'idle', ctx,
         send: () => {}, followup: () => {}, steer: () => {}, inject: () => {}, cancel: () => {},
+        editMessage: () => { throw new Error('unused stub Agent editMessage') },
         runMaintenance: task => task(new AbortController().signal), whenIdle: () => Promise.resolve(),
       }
       await ctx.agents.register(parent)
@@ -694,6 +695,7 @@ describe('dsh-tool-workflow', () => {
         id: session.id, options: {}, session, model: unsupportedModel(),
         inbox: createInboxStub(), status: 'idle', ctx,
         send: () => {}, followup: () => {}, steer: () => {}, inject: () => {}, cancel: () => {},
+        editMessage: () => { throw new Error('unused stub Agent editMessage') },
         runMaintenance: task => task(new AbortController().signal), whenIdle: () => Promise.resolve(),
       }
       await ctx.agents.register(parent)

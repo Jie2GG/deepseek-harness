@@ -141,6 +141,7 @@ async function harness(logged?: {
     status: 'running',
     ctx,
     inbox: createInboxStub(),
+    editMessage: () => { throw new Error('unused stub Agent editMessage') },
     whenIdle: vi.fn(() => Promise.resolve()),
     runMaintenance: async () => { throw new Error('unexpected maintenance') },
     send: vi.fn(),

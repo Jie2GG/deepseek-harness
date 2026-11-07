@@ -38,6 +38,7 @@ function stubAgent(ctx: Context, id: string): { agent: Agent; session: Session }
     inject(input) { this.inbox.append('next-step', input) },
     cancel() { status = 'idle' },
     runMaintenance: task => task(new AbortController().signal),
+    editMessage: () => { throw new Error('unused stub Agent editMessage') },
     whenIdle() { return Promise.resolve() },
   }
   return { agent, session }

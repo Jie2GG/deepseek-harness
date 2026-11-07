@@ -55,7 +55,7 @@ For scoped switch notices, call `installModelSelection(agentCtx)` from `dsh-agen
 
 ### Drive an agent's conversation
 
-The handle's methods route identified user-role messages into the agent's inbox. `followup()` queues an ordinary next-turn prompt and wakes the driver; `steer()` submits next-step input and wakes it; `inject()` adds model-facing context without waking the driver, so it lands in the next admitted step. `cancel(cause)` aborts the active activity and, unless `keepInbox` is set, clears pending work; `whenIdle()` resolves after the whole agent reaches quiescence.
+The handle's methods route identified user-role messages into the agent's inbox. `followup()` queues an ordinary next-turn prompt and wakes the driver; `steer()` submits next-step input and wakes it; `inject()` adds model-facing context without waking the driver, so it lands in the next admitted step. `cancel(cause)` aborts the active activity and, unless `keepInbox` is set, clears pending work; `whenIdle()` resolves after the whole agent reaches quiescence. `editMessage({targetSeq, content})` rewrites one already-sent human prompt: it requires an idle agent, reports the surface nodes the rewrite shadows and the pending items it cleared, and queues the corrected text so the next turn continues from it; settings such as the directory, permission preset, model, and turn numbering keep their values, and work the discarded turns already did outside the log stays done.
 
 ```text
 handle.agent.followup({

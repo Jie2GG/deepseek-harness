@@ -556,6 +556,26 @@ export interface PluginRecord {
   readonly data: unknown
 }
 
+/** Durable identity of one in-place rewrite of a sent human message. */
+export interface UserMessageEditSource {
+  readonly kind: 'user-edit'
+  /** Surface seq of the human message the user rewrote: the edit's first shadowed node. */
+  readonly editedSeq: SessionSeq
+  /** Rewrites already applied along this message's chain, counting this one. One for a first edit. */
+  readonly editCount: number
+}
+
+declare module '@deepseek-ai/dsh-llm' {
+  interface MessageSourceMap {
+    /**
+     * A human message rewritten after it was sent. The rewrite is one surface
+     * replacement copy that shadows the edited message through the last node,
+     * so the model sees the corrected text and nothing logged after it.
+     */
+    'user-edit': UserMessageEditSource
+  }
+}
+
 declare module '@deepseek-ai/dsh-typert-protocol' {
   interface TypertResourceMap {
     /** One Session; the Session Controller registers its default `sessionId` wire field. */

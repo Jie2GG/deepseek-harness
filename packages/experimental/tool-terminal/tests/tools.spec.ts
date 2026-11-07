@@ -31,6 +31,7 @@ async function fakeAgent(ctx: Context, rawId: string): Promise<Agent> {
     send: () => {},
     followup: () => {}, steer: () => {}, inject: () => {}, cancel() {},
     runMaintenance: job => job(new AbortController().signal),
+    editMessage: () => { throw new Error('unused stub Agent editMessage') },
     whenIdle: () => Promise.resolve(),
   }
   await ctx.agents.register(agent)

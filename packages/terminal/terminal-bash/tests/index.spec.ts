@@ -62,6 +62,7 @@ function agent(ctx: Context, cwd?: string): Agent {
     send: () => {},
     followup: () => {}, steer: () => {}, inject: () => {}, cancel() {},
     runMaintenance: task => task(new AbortController().signal),
+    editMessage: () => { throw new Error('unused stub Agent editMessage') },
     whenIdle: () => Promise.resolve(),
   }
 }
@@ -683,6 +684,7 @@ describe('terminal-bash plugin shape', () => {
       send: () => {},
       followup: () => {}, steer: () => {}, inject: () => {}, cancel() {},
       runMaintenance: task => task(new AbortController().signal),
+      editMessage: () => { throw new Error('unused stub Agent editMessage') },
       whenIdle: () => Promise.resolve(),
     }
     await ctx.agents.register(owner)
@@ -735,6 +737,7 @@ describe('terminal-bash plugin shape', () => {
       send: () => {},
       followup: () => {}, steer: () => {}, inject: () => {}, cancel() {},
       runMaintenance: task => task(new AbortController().signal),
+      editMessage: () => { throw new Error('unused stub Agent editMessage') },
       whenIdle: () => Promise.resolve(),
     }
     await ctx.agents.register(owner)

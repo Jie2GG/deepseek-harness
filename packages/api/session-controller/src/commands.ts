@@ -8,6 +8,7 @@ import { randomUUID } from 'node:crypto'
 import type { Context } from '@deepseek-ai/cordis'
 import { brandString } from '@deepseek-ai/dsh-brand'
 import type { Agent, ModelSelection as AgentModelSelection } from '@deepseek-ai/dsh-agent'
+import { MessageEditError } from '@deepseek-ai/dsh-agent'
 import { AttachmentError } from '@deepseek-ai/dsh-attachment'
 import type {
   AttachmentAdmissionPart,
@@ -42,6 +43,8 @@ import type {
   SessionCancelValue,
   SessionCreateRequest,
   SessionCreateValue,
+  SessionEditMessageRequest,
+  SessionEditMessageValue,
   SessionForkRequest,
   SessionForkValue,
   SessionPromptRequest,
@@ -215,6 +218,46 @@ export class SessionCommandController {
       throw new RemoteError(
         'gateway/internal',
         `failed to rename session "${request.sessionId}": ${String(error)}`,
+        {},
+      )
+    }
+  }
+
+  /**
+   * Rewrite one sent human message and void the history after it. The Agent must
+   * be idle: a running turn is stopped first by the person using the Session,
+   * because rewriting a prompt that already produced work does not undo that work.
+   * @param request - Session identity, target surface seq, and rewritten content.
+   * @returns the preserved message identity, the shadowed node count, and the
+   *   count of pending inbox items the edit removed.
+   */
+  async editMessage(request: SessionEditMessageRequest): Promise<SessionEditMessageValue> {
+    const agent = await this.resolveAgent(request.sessionId)
+    let targetSeq: SessionSeq
+    try {
+      targetSeq = SessionSeq(request.targetSeq)
+    } catch {
+      throw new RemoteError('gateway/bad-request', 'targetSeq must be a non-negative safe integer', {})
+    }
+    try {
+      const accepted = agent.editMessage({ targetSeq, content: request.content })
+      return {
+        messageId: accepted.messageId,
+        shadowedNodeCount: accepted.shadowedNodeCount,
+        clearedQueueCount: accepted.clearedQueueCount,
+      }
+    } catch (error: unknown) {
+      if (remoteErrorOf(error) !== undefined) throw error
+      if (error instanceof MessageEditError) {
+        throw new RemoteError('session/edit-rejected', error.message, {
+          sessionId: request.sessionId,
+          targetSeq: request.targetSeq,
+          code: error.code,
+        })
+      }
+      throw new RemoteError(
+        'gateway/internal',
+        `failed to edit a message in session "${request.sessionId}": ${String(error)}`,
         {},
       )
     }

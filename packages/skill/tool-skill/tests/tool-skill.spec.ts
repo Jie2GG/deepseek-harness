@@ -88,6 +88,7 @@ function agentForCwd(cwd: string): Agent {
     inject: () => { throw new Error('step-boundary catalog must not use agent.inject()') },
     cancel() {},
     runMaintenance: task => task(new AbortController().signal),
+    editMessage: () => { throw new Error('unused stub Agent editMessage') },
     whenIdle: () => Promise.resolve(),
   }
 }
@@ -107,6 +108,7 @@ function sessionAgent(session: Session, id = 'tool-skill-agent'): Agent {
     inject: () => { throw new Error('step-boundary catalog must not use agent.inject()') },
     cancel() {},
     runMaintenance: task => task(new AbortController().signal),
+    editMessage: () => { throw new Error('unused stub Agent editMessage') },
     whenIdle: () => Promise.resolve(),
   }
   return agent

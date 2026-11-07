@@ -36,6 +36,7 @@ function stubAgent(rawId: string, overrides: Partial<Agent> = {}): Agent {
     inject: () => {},
     cancel() {},
     runMaintenance: task => task(new AbortController().signal),
+    editMessage: () => { throw new Error('unused stub Agent editMessage') },
     whenIdle: () => Promise.resolve(),
     ...overrides,
   }

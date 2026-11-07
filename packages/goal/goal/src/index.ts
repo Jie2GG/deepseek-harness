@@ -157,6 +157,7 @@ export function applyGoalProjection(state: GoalProjectionState, event: SessionEv
 /** Strict host goal state with the existing cropped client value. */
 export const goalProjectionDefinition = {
   key: 'goal',
+  rewindable: true,
   stateSchema: goalProjectionStateSchema,
   init: (): GoalProjectionState => ({ current: null, seenGoalIds: [], failure: null }),
   apply: applyGoalProjection,

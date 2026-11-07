@@ -241,6 +241,7 @@ describe('JobController', () => {
       inject: () => {},
       cancel: () => {},
       runMaintenance: task => task(new AbortController().signal),
+      editMessage: () => { throw new Error('unused stub Agent editMessage') },
       whenIdle: () => Promise.resolve(),
     }
     await ctx.agents.register(owner)

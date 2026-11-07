@@ -264,7 +264,7 @@ export interface Config {
 ## `@deepseek-ai/dsh-api-session-controller`
 
 - `inject`: `agentDefaultModel` · `agents` · `attachments` · `fileUploads` · `fs` · `llm` · `remoteAccess` · `sessions` · `sessionProjections` · `sessionQuery` · `typert` · `typertGateway` · `workspaceRegistry`
-- `source`: [`packages/api/session-controller/src/index.ts:110`](../packages/api/session-controller/src/index.ts)
+- `source`: [`packages/api/session-controller/src/index.ts:112`](../packages/api/session-controller/src/index.ts)
 
 ```ts config-catalog
 /** Session Controller deployment policy. */
@@ -430,7 +430,7 @@ export interface Config {
 ## `@deepseek-ai/dsh-attachment-reclaim`
 
 - `inject`: `storageDomain` · `sessionPersistence` · `attachments`
-- `source`: [`packages/attachment/attachment-reclaim/src/index.ts:60`](../packages/attachment/attachment-reclaim/src/index.ts)
+- `source`: [`packages/attachment/attachment-reclaim/src/index.ts:61`](../packages/attachment/attachment-reclaim/src/index.ts)
 
 ```ts config-catalog
 /**
@@ -1627,7 +1627,7 @@ export type Config = LocalConfig
 ## `@deepseek-ai/dsh-goal`
 
 - `inject`: `agents` · `sessionProjections`
-- `source`: [`packages/goal/goal/src/index.ts:168`](../packages/goal/goal/src/index.ts)
+- `source`: [`packages/goal/goal/src/index.ts:169`](../packages/goal/goal/src/index.ts)
 
 ```ts config-catalog
 /** Deployment defaults for goal creation. */
@@ -4635,7 +4635,7 @@ export interface Config {
 ## `@deepseek-ai/dsh-user-approval`
 
 - `inject`: `sessionProjections`
-- `source`: [`packages/interaction/user-approval/src/index.ts:152`](../packages/interaction/user-approval/src/index.ts)
+- `source`: [`packages/interaction/user-approval/src/index.ts:153`](../packages/interaction/user-approval/src/index.ts)
 
 ```ts config-catalog
 /** Plugin config. All optional — `static Config` supplies the defaults. */

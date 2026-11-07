@@ -84,6 +84,7 @@ const EMPTY_OUTLINE: TurnOutlineState = { turns: [], draft: '' }
 /** The `turnOutline` unit registered on `ctx.sessionProjections` (exported for the unit spec). */
 export const turnOutlineProjectionDefinition = {
   key: 'turnOutline',
+  rewindable: true,
   stateVersion: 2,
   stateSchema: turnOutlineStateSchema,
   init: () => EMPTY_OUTLINE,

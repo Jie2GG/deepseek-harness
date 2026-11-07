@@ -60,6 +60,7 @@ function sessionAgent(session: Session, id = 'agent'): Agent {
     inject: () => { throw new Error('time-context must append directly to the open step') },
     cancel() {},
     runMaintenance: task => task(new AbortController().signal),
+    editMessage: () => { throw new Error('unused stub Agent editMessage') },
     whenIdle: () => Promise.resolve(),
   }
   return agent

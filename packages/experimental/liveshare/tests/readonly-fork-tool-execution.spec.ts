@@ -69,6 +69,7 @@ function standInAgent(id: SessionId, cwd: string): Omit<Agent, 'ctx'> {
     steer: () => {},
     inject: () => {},
     cancel: () => {},
+    editMessage: () => { throw new Error('unused stub Agent editMessage') },
     whenIdle: () => Promise.resolve(),
     runMaintenance: task => task(new AbortController().signal),
   }

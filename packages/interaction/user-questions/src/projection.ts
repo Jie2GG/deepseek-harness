@@ -315,6 +315,7 @@ export function foldUserQuestions(events: readonly SessionEvent[]): UserQuestion
 /** Session projection exposing open, continued, and settled timed questions to every Client. */
 export const userQuestionProjectionDefinition = {
   key: 'userQuestions',
+  rewindable: true,
   stateSchema: z.object({
     inheritedEventCount: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).transform(SessionLogOffset),
     timed: z.boolean(),

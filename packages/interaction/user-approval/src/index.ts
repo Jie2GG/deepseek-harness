@@ -88,6 +88,7 @@ interface ApprovalState {
 
 const approvalStateDefinition = {
   key: 'approvalState',
+  rewindable: true,
   stateVersion: 1,
   stateSchema: zod.object({
     policy: zod.enum(['ask', 'never']).nullable(),
