@@ -1,6 +1,7 @@
 import { memo, useEffect, useMemo, useState } from 'react'
 import type { ReactNode } from 'react'
 import type { PendingSubmission } from '@deepseek-ai/dsh-api-session-controller/client'
+import type { ContentBlock } from '@deepseek-ai/dsh-llm/types'
 import type { PropsRenderFactories, PropsRenderSlots } from '@deepseek-ai/dsh-client-ui-slots'
 import type { UserTextFacts } from '@deepseek-ai/dsh-client-ui-conversation/client'
 import { JsonBlock, StateDot, TextShimmer } from '@deepseek-ai/dsh-client-ui-primitives'
@@ -329,13 +330,54 @@ export function PendingSubmissionBubble({ submission, loadImage, renderFactorySl
  * declared by the `user` registration alone, so a steering row renders the same
  * bubble without asking for it.
  */
+/** Whether one user-message Node came from a human prompt an edit may rewrite. */
+function isHumanPrompt(source: unknown): boolean {
+  if (typeof source !== 'object' || source === null) return false
+  const kind = (source as { kind?: unknown }).kind
+  return kind === 'user' || kind === 'user-edit'
+}
+
+/** Swap a prompt's text for the rewritten draft, keeping its attachment blocks in place. */
+function withRewrittenText(
+  content: readonly ContentBlock[],
+  text: string,
+): readonly ContentBlock[] {
+  const next: ContentBlock[] = []
+  let placed = false
+  for (const block of content) {
+    if (block.type !== 'text') { next.push(block); continue }
+    if (placed) continue
+    next.push({ ...block, text })
+    placed = true
+  }
+  return placed ? next : [...next, { type: 'text', text }]
+}
+
 export const UserMessageNodeView = memo(function UserMessageNodeView({
-  node, renderFactorySlot, loadImage, renderSlotChain, t,
+  node, renderFactorySlot, loadImage, renderSlotChain, t, editAt,
 }: ChatNodeViewProps<'user' | 'steering'> & {
   /** Bound by the `user` keyed registration, the only entry that declares the seat. */
   renderSlotChain: PropsRenderSlots<'conversation.chat.user.before'>['renderSlotChain']
 }) {
   const data = node.data
+  const turn = node.location.kind === 'turn' || node.location.kind === 'step'
+    ? node.location.turn
+    : undefined
+  // An open Turn is still answering this prompt, and work it already did outside
+  // the log cannot be undone, so editing waits until the Turn closes.
+  const editable = node.kind === 'user' && data.messageId !== undefined
+    && turn?.status === 'closed' && isHumanPrompt(data.source)
+  const [draft, setDraft] = useState<string | null>(null)
+  const [refusal, setRefusal] = useState<string | null>(null)
+  const closeEditor = (): void => {
+    setDraft(null)
+    setRefusal(null)
+  }
+  const sendDraft = async (): Promise<void> => {
+    const text = (draft ?? '').trim()
+    if (text === '') return
+    setRefusal(await editAt(data.seq, withRewrittenText(data.content, text)))
+  }
   return (
     <UserStyleBubble
       node={node}
@@ -347,15 +389,54 @@ export const UserMessageNodeView = memo(function UserMessageNodeView({
       batchStart={node.kind === 'steering' && node.data.batchStart === true}
       {...data.referenceLabels === undefined ? {} : { referenceLabels: data.referenceLabels }}
       {...data.skillNames === undefined ? {} : { skillNames: data.skillNames }}
-      actions={text => (
-        <MessageIconActions
-          text={text}
-          time={data.time}
-          clock="start"
-          className={css.actions}
-          t={t}
-        />
-      )}
+      actions={text => draft === null
+        ? (
+          <MessageIconActions
+            text={text}
+            time={data.time}
+            clock="start"
+            className={css.actions}
+            onEdit={editable
+              ? () => {
+                setRefusal(null)
+                setDraft(text)
+              }
+              : undefined}
+            t={t}
+          />
+        )
+        : (
+          <div className={css.editForm}>
+            <textarea
+              className={css.editInput}
+              aria-label={t('message.editInput')}
+              value={draft}
+              rows={Math.min(12, Math.max(2, draft.split('\n').length))}
+              onChange={(event) => { setDraft(event.target.value) }}
+              onKeyDown={(event) => {
+                if (event.key === 'Escape') { closeEditor(); return }
+                if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) {
+                  event.preventDefault()
+                  void sendDraft()
+                }
+              }}
+            />
+            <div className={css.editActions}>
+              <button
+                type="button"
+                className={css.editButton}
+                disabled={draft.trim() === ''}
+                onClick={() => { void sendDraft() }}
+              >
+                {t('message.editSend')}
+              </button>
+              <button type="button" className={css.editButton} onClick={closeEditor}>
+                {t('message.editCancel')}
+              </button>
+              {refusal === null ? null : <span className={css.editRefusal}>{refusal}</span>}
+            </div>
+          </div>
+        )}
     />
   )
 })

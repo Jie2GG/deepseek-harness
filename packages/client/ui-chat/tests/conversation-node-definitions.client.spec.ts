@@ -3153,3 +3153,60 @@ it('keeps user cancellations and forked endings free of a failure row', () => {
     expect(node(snapshot(value), 'turn-error')).toBeUndefined()
   }
 })
+
+describe('human-message edit in Chat', () => {
+  /** One completed turn, then a rewrite of its prompt and the fresh answer. */
+  function editEntries(): SessionLiveEventEntry[] {
+    return [
+      at(0, 'turn/start', { turn: 1 }),
+      at(1, 'step/start', { turn: 1, step: 1 }),
+      at(2, 'user/message', textMessage('ask-1', 'original ask'), { surfaceOp: 'append' }),
+      at(3, 'assistant/live-chunk', {
+        turn: 1, step: 1, chunk: { type: 'text-delta', index: 0, text: 'first answer' },
+      }),
+      at(4, 'assistant/message', { turn: 1, step: 1, message: assistantMessage('answer-1', 'first answer') }, { surfaceOp: 'append' }),
+      at(5, 'turn/end', { turn: 1, reason: { kind: 'completed' } }),
+      at(6, 'turn/start', { turn: 2 }),
+      at(7, 'step/start', { turn: 2, step: 1 }),
+      at(8, 'user/message', {
+        ...textMessage('ask-1', 'corrected ask'),
+        source: { kind: 'user-edit', editedSeq: 2, editCount: 1 },
+      }, { surfaceOp: { op: 'replace', startSeq: 2, endSeq: 4 }, sourceEventSeqs: [2, 4] }),
+      at(9, 'assistant/live-chunk', {
+        turn: 2, step: 1, chunk: { type: 'text-delta', index: 0, text: 'second answer' },
+      }),
+      at(10, 'assistant/message', { turn: 2, step: 1, message: assistantMessage('answer-2', 'second answer') }, { surfaceOp: 'append' }),
+      at(11, 'turn/end', { turn: 2, reason: { kind: 'completed' } }),
+    ]
+  }
+
+  /** Every visible Node in order, as kind@anchor-seq labels. */
+  function bubbles(view: ChatSnapshot): string[] {
+    const visibleKeys = new Set(view.order)
+    return [...view.nodes.values()]
+      .filter(candidate => visibleKeys.has(candidate.key))
+      .sort((left, right) => left.anchorSeq - right.anchorSeq)
+      .map(candidate => `${candidate.kind}@${candidate.anchorSeq}`)
+  }
+
+  it.each(['replay', 'live'] as const)('replaces the edited prompt and drops the superseded answer (%s)', (mode) => {
+    const entries = editEntries()
+    const value = assembler(mode === 'replay' ? entries : [])
+    if (mode === 'live') {
+      for (const entry of entries) {
+        value.append(entry)
+        value.flush()
+      }
+    }
+    const view = snapshot(value)
+    // The rewrite owns the prompt's place, and the superseded turn leaves the
+    // transcript entirely: only the new branch's Nodes stay visible.
+    expect(bubbles(view)).toEqual([
+      'user@8',
+      'turn-process@8.9',
+      'assistant-step@9',
+      'turn-tail@11.1',
+    ])
+    expect(node(view, 'user')?.data).toMatchObject({ seq: 8, source: { kind: 'user-edit', editedSeq: 2 } })
+  })
+})

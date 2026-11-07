@@ -60,6 +60,8 @@ When an Assistant attempt retires without a visible message, Chat hides its alre
 
 Text and reasoning contribute to Assistant visibility only when they contain a non-whitespace character. Streaming appends reuse each block's visibility; block replacement and finalized messages recalculate it while preserving the original text.
 
+A human-message edit also voids presentation: every Node whose event lies between the edited prompt and its replacement copy leaves the transcript, including that Turn's process control and closing row, while the rewrite keeps the original prompt's place. A compaction summary shadows history for the model only — the turns it replaced stay readable here, because the person saw them and the model answered them.
+
 <a id="command-and-failure-rows"></a>
 ## Command and failure rows
 
@@ -91,7 +93,7 @@ Preference menus restore focus to their trigger without scrolling before publish
 
 Artifact extensions can subscribe to one Turn and Node kind through `ChatNodeStore.turnDataSource`. The source includes hidden Nodes and exposes their business data in anchor order. Membership updates incrementally; only observed collections materialize ordered arrays, and unrelated Turns or kinds do not notify them.
 
-The completed-turn action footer follows the recorded Turn end. Its action row starts 20px below preceding prose or extension content. Actions remain visible only on the latest Turn when its final visible content is a reply; other endings and historical Turns reveal actions on hover or keyboard focus. Devices without hover keep actions visible. An unavailable branch action opens its explanation on click or tap without creating a branch.
+The completed-turn action footer follows the recorded Turn end. Its action row starts 20px below preceding prose or extension content. Actions remain visible only on the latest Turn when its final visible content is a reply; other endings and historical Turns reveal actions on hover or keyboard focus. Devices without hover keep actions visible. An unavailable branch action opens its explanation on click or tap without creating a branch. A closed Turn's own human prompt also offers an edit action: it opens an inline editor in the bubble, keeps that prompt's attachments, and sending rewrites the durable history and re-asks. The action is absent while the Turn is open, because work the running Turn already did outside the log cannot be recalled.
 
 -----
 

@@ -433,6 +433,7 @@ function makeHarness(
     read: () => savedScroll,
   }
   const forkAt = vi.fn()
+  const editAt = vi.fn(async () => null as string | null)
   // Rows and the harness must observe the same chat-store instance.
   const chat = createChatStore().create()
   const transcriptView = createSnapshotStore<TranscriptViewMode>('compact')
@@ -550,6 +551,7 @@ function makeHarness(
     loadImage: vi.fn(() => Promise.reject(new Error('not used'))),
     chatScroll,
     forkAt,
+    editAt,
     // Absent-service default; mention tests override with a real resolver.
     fileMentions: () => undefined,
     t,
@@ -577,7 +579,7 @@ function makeHarness(
     setConnection: (state: ConnectionState) => { connection.set(state) },
     openFile, openUserFile, loadOlder, loadThrough, openView,
     setOutline: (value: unknown) => { outlineValue = value },
-    chatScroll, forkAt, toolOwners,
+    chatScroll, forkAt, editAt, toolOwners,
     setPerformanceUsage: (mode: 'compact' | 'detailed') => { performanceUsage.set(mode) },
     setGrouped: (value: ConversationGroupedView<ProcessGroupData> | undefined) => {
       grouped = value
@@ -3646,6 +3648,43 @@ describe('ChatView', () => {
     fireEvent.click(buttons[0]!)
     expect(h.forkAt.mock.calls).toEqual([[3]])
   })
+
+  it('rewrites a sent prompt from its own bubble once its Turn closes', async () => {
+    const prompt: UserMessageNode = {
+      kind: 'user',
+      messageId: MessageId('ask-1'),
+      seq: 1,
+      time: 1000,
+      content: [{ type: 'text', text: 'original ask' }],
+      source: { kind: 'user' },
+    }
+    // The legacy fixture carries the Turn coordinate the production Location index owns.
+    const h = makeHarness({ nodes: [{ ...prompt, turn: 1 } as ConversationNode, assistant(2, 'answer')], turnEnds: new Map([[1, 3]]) })
+    const view = render(<h.ChatView {...h.props} />)
+    fireEvent.click(view.getByRole('button', { name: '编辑消息' }))
+    const field = view.getByRole('textbox', { name: '编辑这条消息' })
+    fireEvent.change(field, { target: { value: 'corrected ask' } })
+    fireEvent.keyDown(field, { key: 'Enter', ctrlKey: true })
+    await waitFor(() => {
+      expect(h.editAt.mock.calls).toEqual([[1, [{ type: 'text', text: 'corrected ask' }]]])
+    })
+  })
+
+  it('offers no prompt edit while its Turn is still running', () => {
+    const prompt: UserMessageNode = {
+      kind: 'user',
+      messageId: MessageId('ask-open'),
+      seq: 1,
+      time: 1000,
+      content: [{ type: 'text', text: 'original ask' }],
+      source: { kind: 'user' },
+    }
+    // No turn/end: the Turn is open, so the prompt is still being answered.
+    const h = makeHarness({ nodes: [{ ...prompt, turn: 1 } as ConversationNode, assistant(2, 'answer')] })
+    const view = render(<h.ChatView {...h.props} />)
+    expect(view.queryByRole('button', { name: '编辑消息' })).toBeNull()
+  })
+
 
   it('disables fork when the indexed Turn has a later steering Node', () => {
     const base = chatSnapshotFixture({

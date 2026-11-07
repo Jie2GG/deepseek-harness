@@ -84,7 +84,10 @@ export const messageDefinition: ConversationNodeDefinition<MessageNode> = {
   target: 'chat',
   match: (event) => {
     if (event.type === 'user/message') {
-      return isAppendSurfaceEvent(event) && !isCompactionCheckpoint(event)
+      // A human-message edit is a replacement copy: it owns the edited message's
+      // identity, so Chat shows the rewritten text in that message's place.
+      const rewritten = event.surfaceOp !== 'append' && event.data.source.kind === 'user-edit'
+      return (isAppendSurfaceEvent(event) || rewritten) && !isCompactionCheckpoint(event)
         ? { id: String(event.data.id), role: 'start' }
         : null
     }
@@ -93,7 +96,7 @@ export const messageDefinition: ConversationNodeDefinition<MessageNode> = {
   start: (_context, match, reader) => {
     const event = match.event
     if (event.type !== 'user/message') throw new Error('input-message start requires user/message')
-    if (event.data.source.kind !== 'user') {
+    if (event.data.source.kind !== 'user' && event.data.source.kind !== 'user-edit') {
       const nextTurn = reader.previous<InboxState>('inbox-next-turn')?.state
       const nextStep = reader.previous<InboxState>('inbox-next-step')?.state
       const location = match.location
@@ -133,7 +136,23 @@ export const messageDefinition: ConversationNodeDefinition<MessageNode> = {
         source: event.data.source,
       }
   },
-  update: context => context.state,
+  update: (context, match) => {
+    const state = context.state
+    const event = match.event
+    // A rewrite of a sent prompt adopts the replacement copy: the message keeps
+    // its identity and transcript position while its text, source, and event
+    // position become the copy's.
+    if (state.kind !== 'user' && state.kind !== 'steering') return state
+    if (event.type !== 'user/message' || event.surfaceOp === 'append') return state
+    if (event.data.source.kind !== 'user-edit') return state
+    return {
+      ...state,
+      content: event.data.content,
+      seq: event.seq,
+      time: event.time,
+      source: event.data.source,
+    }
+  },
   buildViewNode: (context) => {
     if (context.state === undefined) return null
     const location = contextLocation(context)

@@ -513,6 +513,33 @@ function presentationPosition(
 }
 
 /**
+ * Log-seq ranges each human-message edit voids, in the order the edits landed.
+ * A rewrite is one replacement copy that shadows the edited message together
+ * with the history that followed it. Chat keeps compaction's shadowed turns
+ * visible because that conversation really happened and was only summarized; a
+ * rewrite did not happen, so its superseded bubbles leave the transcript.
+ * @param nodes - currently materialized Chat Nodes, any visibility state.
+ * @returns half-open ranges of superseded event sequences plus the owning Node.
+ */
+function editVoidRanges(
+  nodes: readonly ChatConversationViewNode[],
+): readonly { start: number; end: number; owner: string }[] {
+  const ranges: { start: number; end: number; owner: string }[] = []
+  for (const candidate of nodes) {
+    const node = candidate as ChatNode
+    if (node.kind !== 'user' && node.kind !== 'steering') continue
+    const source: unknown = node.data.source
+    if (typeof source !== 'object' || source === null) continue
+    const { kind, editedSeq } = source as { kind?: unknown; editedSeq?: unknown }
+    const rewriteSeq = node.data.seq
+    if (kind !== 'user-edit' || typeof editedSeq !== 'number') continue
+    if (typeof rewriteSeq !== 'number' || editedSeq >= rewriteSeq) continue
+    ranges.push({ start: editedSeq, end: rewriteSeq, owner: node.key })
+  }
+  return ranges
+}
+
+/**
  * Order visible Chat Nodes without changing existing relative order as process
  * eligibility changes. Opening input precedes process candidates, while
  * each synthetic process control sits between them.
@@ -522,7 +549,10 @@ function presentationPosition(
 export function orderedVisibleChatNodes(
   nodes: readonly ChatConversationViewNode[],
 ): ChatConversationViewNode[] {
-  const visible = nodes.filter(node => isVisibleChatNode(node as ChatNode))
+  const voids = editVoidRanges(nodes)
+  const visible = nodes.filter(node => isVisibleChatNode(node as ChatNode)
+    && !voids.some(range => node.key !== range.owner
+      && node.anchorSeq >= range.start && node.anchorSeq < range.end))
   const presentations = turnProcessPresentations(visible)
   return visible.sort((left, right) => {
     const leftPosition = presentationPosition(left, presentations)

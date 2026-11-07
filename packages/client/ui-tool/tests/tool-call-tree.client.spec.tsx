@@ -52,6 +52,7 @@ function props(
     openFile: vi.fn(),
     inspectCall: vi.fn(),
     forkAt: vi.fn(),
+    editAt: vi.fn(async () => null as string | null),
     loadImage: vi.fn(() => Promise.reject(new Error('not used'))),
     useContextMenu: contextMenuHook(),
     sessionId: 'original' as ToolTreeProps['sessionId'],

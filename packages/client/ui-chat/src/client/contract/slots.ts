@@ -1,6 +1,7 @@
 /** Chat-owned Slot declarations and composed component props. */
 import type { RefObject } from 'react'
 import type { MessageId } from '@deepseek-ai/dsh-llm/brand'
+import type { ContentBlock } from '@deepseek-ai/dsh-llm/types'
 import type { SessionId, SessionSeq } from '@deepseek-ai/dsh-session/types'
 import type { PendingSubmission } from '@deepseek-ai/dsh-api-session-controller/client'
 import type { FileAttachmentRef } from '@deepseek-ai/dsh-attachment'
@@ -242,6 +243,15 @@ export interface ChatNodeOwnerProps {
   openFile: (path: string, options?: OpenFileOptions) => void
   inspectCall: ((callId: ToolCallId) => void) | undefined
   forkAt: (seq: number) => void
+  /**
+   * Rewrite one sent human prompt and re-ask with the corrected text. The Host
+   * refuses while a turn is running, so the action is offered only when the
+   * Session is idle.
+   * @param seq - event position of the prompt's current surface node.
+   * @param content - rewritten blocks: edited text plus the prompt's own attachments.
+   * @returns the Host's refusal reason, or null once the edit is accepted.
+   */
+  editAt: (seq: number, content: readonly ContentBlock[]) => Promise<string | null>
   /** Session-authorized image loader supplied by the Chat view. */
   loadImage: MessageImageLoader
   /** Turn-process state when this Node belongs to a projected Turn. */
@@ -356,6 +366,7 @@ export interface ChatViewInjected {
     read: () => ChatScrollPosition | null
   }
   forkAt: (seq: number) => void
+  editAt: (seq: number, content: readonly ContentBlock[]) => Promise<string | null>
 }
 
 /** Session-owned node sources shared with the view, plus the flow's connection state. */
@@ -368,7 +379,7 @@ export type ChatFlowDataInjected = Pick<ChatViewInjected, 'keyedHooks'> & {
 
 /** Ordered rows and reconciled local echoes rendered inside one Chat viewport. */
 export interface ChatFlowOwnerProps extends Pick<ChatNodeOwnerProps,
-  'cwd' | 'openFile' | 'inspectCall' | 'forkAt' | 'loadImage'> {
+  'cwd' | 'openFile' | 'inspectCall' | 'forkAt' | 'editAt' | 'loadImage'> {
   readonly entries: readonly RenderEntry[]
   readonly pendingInputs: readonly (PendingSubmission | InboxState['next-step'][number])[]
   readonly lastInputTurn: number | undefined
