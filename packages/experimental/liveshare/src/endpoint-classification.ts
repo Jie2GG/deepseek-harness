@@ -124,6 +124,7 @@ export const VIEWER_ENDPOINT_CLASSES = {
   'directoryPicker/list': 'owner-only', // owner filesystem picker
   'directoryPicker/pick': 'owner-only', // owner filesystem picker
   'workspace/archiveSession': 'owner-only', // owner archives a Session
+  'workspace/deleteSession': 'owner-only', // owner deletes a Session and its log
   'workspace/create': 'owner-only', // owner creates a Workspace
   'workspace/delete': 'owner-only', // owner deletes a Workspace
   'workspace/initializeDefault': 'owner-only', // owner initializes the default Workspace

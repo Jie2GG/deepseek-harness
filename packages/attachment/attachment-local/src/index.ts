@@ -5,6 +5,9 @@ import { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 import { AttachmentStore } from '@deepseek-ai/dsh-attachment'
 import type {
+  AttachmentDiscardOptions,
+  AttachmentDiscardResult,
+  AttachmentId,
   FileAttachmentRef,
   ImageAttachmentLimits,
   ImageAttachmentRef,
@@ -19,9 +22,11 @@ import { dshCachePath, resolveDshHome } from '@deepseek-ai/dsh-home-paths'
 import type { NormalizationPolicy } from './normalization.ts'
 import { CompressionLimiter, compressionFailure } from './compression-limiter.ts'
 import { commitPreparedImageFile, normalizedImagePath, prepareImageFile, readImageFile, validateImageFile } from './store.ts'
+import type { PreparedImageFile } from './store.ts'
 import {
   readFileStreamVerbatim, saveFileStreamVerbatim, saveFileVerbatim, storedFilePath,
 } from './file-store.ts'
+import { discardStoredAttachment } from './discard.ts'
 import { readRequestImageFile, requestImageVariantId } from './request-image.ts'
 
 export { canPassThroughNormalization, normalizeImage } from './normalization.ts'
@@ -29,6 +34,7 @@ export type { NormalizedImage, NormalizationPolicy } from './normalization.ts'
 export { commitPreparedImageFile, prepareImageFile, readImageFile, saveImageFile, validateImageFile } from './store.ts'
 export type { PreparedImageFile } from './store.ts'
 export { readRequestImageFile, requestImageVariantId } from './request-image.ts'
+export { discardStoredAttachment } from './discard.ts'
 
 /** Default maximum encoded bytes for one submitted image; oversized sources are refused, not shrunk. */
 export const DEFAULT_MAX_IMAGE_BYTES = 50 * 1024 * 1024
@@ -214,7 +220,7 @@ export class LocalAttachmentStore extends AttachmentStore {
       () => prepareImageFile(input, this.imageLimits, this.normalizationPolicy),
     )))
     const refs: ImageAttachmentRef[] = []
-    for (const image of prepared) refs.push(await commitPreparedImageFile(this.root, image))
+    for (const image of prepared) refs.push(await this.commitImage(image))
     return refs
   }
 
@@ -222,7 +228,14 @@ export class LocalAttachmentStore extends AttachmentStore {
     const prepared = await this.compression.run(
       () => prepareImageFile(input, this.imageLimits, this.normalizationPolicy),
     )
-    return commitPreparedImageFile(this.root, prepared)
+    return await this.commitImage(prepared)
+  }
+
+  /** Publish one prepared image and announce the object reference trackers need. */
+  private async commitImage(prepared: PreparedImageFile): Promise<ImageAttachmentRef> {
+    const ref = await commitPreparedImageFile(this.root, prepared)
+    this.ctx.emit('attachments/saved', ref.attachmentId)
+    return ref
   }
 
   async readImage(ref: ImageAttachmentRef, signal?: AbortSignal): Promise<StoredImageAttachment> {
@@ -234,11 +247,22 @@ export class LocalAttachmentStore extends AttachmentStore {
   }
 
   override async saveFile(input: SaveFileAttachment): Promise<FileAttachmentRef> {
-    return saveFileVerbatim(this.root, input)
+    const ref = await saveFileVerbatim(this.root, input)
+    this.ctx.emit('attachments/saved', ref.attachmentId)
+    return ref
   }
 
   override async saveFileStream(input: SaveFileStreamAttachment): Promise<FileAttachmentRef> {
-    return saveFileStreamVerbatim(this.root, input)
+    const ref = await saveFileStreamVerbatim(this.root, input)
+    this.ctx.emit('attachments/saved', ref.attachmentId)
+    return ref
+  }
+
+  override discard(
+    id: AttachmentId,
+    options?: AttachmentDiscardOptions,
+  ): Promise<AttachmentDiscardResult> {
+    return discardStoredAttachment(this.root, id, options)
   }
 
   override readFileStream(ref: FileAttachmentRef, signal?: AbortSignal): AsyncIterable<Uint8Array> {

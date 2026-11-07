@@ -40,16 +40,16 @@ export function WorkspaceId(id: string): WorkspaceId {
 }
 
 /**
- * An archiveSession or pinSession request named a session neither live nor in
- * session persistence — a definite miss only; storage faults propagate as
- * themselves.
+ * An archiveSession, pinSession, or deleteSession request named a session
+ * neither live nor in session persistence — a definite miss only; storage
+ * faults propagate as themselves.
  */
 export class WorkspaceUnknownSessionError extends Error {
   /**
    * @param sessionId - The unknown session id.
    * @param verb - The registry operation that named the session.
    */
-  constructor(readonly sessionId: SessionId, verb: 'archive' | 'pin') {
+  constructor(readonly sessionId: SessionId, verb: 'archive' | 'pin' | 'delete') {
     super(`cannot ${verb} session '${sessionId}': live sessions and session persistence hold no such session`)
     this.name = 'WorkspaceUnknownSessionError'
   }
@@ -110,6 +110,23 @@ export interface ArchiveSessionOptions {
   readonly stopActivity?: boolean
 }
 
+/** Caller choices for {@link WorkspaceRegistry.deleteSession}. */
+export interface DeleteSessionOptions {
+  /**
+   * Ask the composed providers to stop the Session running work instead of
+   * refusing the deletion because of it. The intent and the log removal happen
+   * first, then the stops are requested: a provider failure is logged without
+   * undoing the deletion, and a write handle that outlives the stop keeps the
+   * durable intent so a later start finishes the removal.
+   */
+  readonly stopActivity?: boolean
+}
+
+/** The Session one workspace/session-deleted notice names. */
+export interface SessionDeletedNotice {
+  readonly sessionId: SessionId
+}
+
 declare module '@deepseek-ai/cordis' {
   interface Context {
     workspaceRegistry: WorkspaceRegistry
@@ -145,6 +162,16 @@ declare module '@deepseek-ai/cordis' {
      * @mode parallel
      */
     'workspace/session-stop'(request: SessionActivityRequest): Promise<void> | void
+    /**
+     * Announce that one Session log was removed and this registry dropped every
+     * trace of it, so each other owner of a derived record about that Session can
+     * retire its copy. The removal is already durable when this dispatches, and
+     * the Session is no longer in any workspace, archive, or pin set. Listeners
+     * never veto it: a listener failure is logged and the rest still run.
+     * @param notice - the Session whose log no longer exists.
+     * @mode emit
+     */
+    'workspace/session-deleted'(notice: SessionDeletedNotice): void
   }
 }
 
@@ -216,6 +243,7 @@ export class WorkspaceRegistry extends Service {
     await this.indexLiveSessions()
     this.validateStoredState(this.requireState())
     this.rebuildEntities()
+    await this.resumePendingDeletions()
     this.reportFilteredCandidates()
   }
 
@@ -367,15 +395,7 @@ export class WorkspaceRegistry extends Service {
       // The chain slot serializes against every other registry write, so this
       // check-then-write pair cannot interleave with another archive.
       if (this.requireState().archivedSessionIds.includes(sessionId)) return
-      if (!(await this.sessionKnown(sessionId))) {
-        throw new WorkspaceUnknownSessionError(sessionId, 'archive')
-      }
-      if (options.stopActivity !== true) {
-        const activity = await this.ctx.waterfall(
-          'workspace/session-activity', { sessionId }, () => Promise.resolve([]),
-        )
-        if (activity.length > 0) throw new WorkspaceActiveSessionError(sessionId, activity)
-      }
+      await this.requireKnownAndIdle(sessionId, 'archive', options.stopActivity)
       const state = this.requireState()
       await this.setState({
         ...state,
@@ -407,6 +427,56 @@ export class WorkspaceRegistry extends Service {
         archivedSessionIds: state.archivedSessionIds.filter(id => id !== sessionId),
       })
     })
+  }
+
+  /**
+   * Delete one Session irreversibly: its log goes first, then every trace of
+   * it in this registry.
+   *
+   * The Session must exist, and without `stopActivity` it must also be
+   * inactive — the `workspace/session-activity` waterfall is asked once, and any
+   * reported activity rejects before anything is written. A pending-deletion
+   * intent is recorded before the log removal, and that removal is the commit
+   * point every read face follows: listings and search are projected from stored
+   * logs, so a Session whose log survives an interrupted delete stays visible
+   * rather than vanishing with its bytes still on disk. Once the log is gone this
+   * registry drops the Session from its workspace record and from the archive and
+   * pin sets, forgets its header, and emits `workspace/session-deleted` for the
+   * records other packages derive from it. Deletion removes only this Session:
+   * the descendants it spawned keep their own self-contained logs.
+   * @param sessionId - the Session to delete.
+   * @param options - whether running work is stopped instead of refusing.
+   * @returns resolution after the log removal and every accounting write are durable.
+   * @throws {WorkspaceUnknownSessionError} when no live Session or stored log names it.
+   * @throws {WorkspaceActiveSessionError} when work still runs and `stopActivity` is unset.
+   * @throws {SessionAlreadyOwnedError} when a write handle still owns the log: the
+   *   intent stays durable, so a later start completes the deletion.
+   */
+  deleteSession(sessionId: SessionId, options: DeleteSessionOptions = {}): Promise<void> {
+    return this.enqueueOperation(async () => {
+      await this.requireKnownAndIdle(sessionId, 'delete', options.stopActivity)
+      const state = this.requireState()
+      if (!this.pendingDeletions().includes(sessionId)) {
+        await this.setState({
+          ...state,
+          pendingSessionDeletions: [...this.pendingDeletions(), sessionId],
+        })
+      }
+      // The commit point. A refusal here keeps every accounting record in place
+      // and leaves the durable intent for the next start.
+      await this.ctx.sessionPersistence.delete(sessionId)
+      await this.finishSessionDeletion(sessionId)
+      if (options.stopActivity === true) await this.stopSessionActivity(sessionId)
+    })
+  }
+
+  /**
+   * The Sessions whose log removal was requested but not finished. The set is
+   * durable, so an interrupted delete is visible to the next start.
+   * @returns Session ids carrying a pending deletion.
+   */
+  get pendingSessionDeletionIds(): readonly SessionId[] {
+    return this.pendingDeletions()
   }
 
   /**
@@ -463,6 +533,29 @@ export class WorkspaceRegistry extends Service {
         pinnedSessionIds: state.pinnedSessionIds.filter(id => id !== sessionId),
       })
     })
+  }
+
+  /**
+   * The gate the archive and delete actions share: the Session must be known,
+   * and unless the caller chose to stop its work, any activity the providers
+   * report refuses before a write.
+   * @param sessionId - the Session the action named.
+   * @param verb - the action, for the unknown-Session failure.
+   * @param stopActivity - whether running work is stopped instead of refusing.
+   */
+  private async requireKnownAndIdle(
+    sessionId: SessionId,
+    verb: 'archive' | 'delete',
+    stopActivity: boolean | undefined,
+  ): Promise<void> {
+    if (!(await this.sessionKnown(sessionId))) {
+      throw new WorkspaceUnknownSessionError(sessionId, verb)
+    }
+    if (stopActivity === true) return
+    const activity = await this.ctx.waterfall(
+      'workspace/session-activity', { sessionId }, () => Promise.resolve([]),
+    )
+    if (activity.length > 0) throw new WorkspaceActiveSessionError(sessionId, activity)
   }
 
   /**
@@ -731,6 +824,7 @@ export class WorkspaceRegistry extends Service {
         workspaceIds,
         archivedSessionIds: state.archivedSessionIds,
         pinnedSessionIds: state.pinnedSessionIds,
+        pendingSessionDeletions: [...this.pendingDeletions()],
       })
     }
     await this.setState({
@@ -738,6 +832,7 @@ export class WorkspaceRegistry extends Service {
       workspaceIds,
       archivedSessionIds: state.archivedSessionIds,
       pinnedSessionIds: state.pinnedSessionIds,
+      pendingSessionDeletions: [...this.pendingDeletions()],
     })
   }
 
@@ -782,6 +877,68 @@ export class WorkspaceRegistry extends Service {
         accounted.set(sessionId, id)
       }
     }
+  }
+
+  /**
+   * Drop every trace one removed Session has in this registry: its workspace
+   * accounting slot, its archive and pin entries, and its header index entry.
+   * The log is already gone, so no read face can serve the Session again, and the
+   * durable deletion intent clears last so an interrupted finish stays visible to
+   * the next start. The `workspace/session-deleted` notice follows the durable
+   * writes: a listener failure costs that listener its own derived record, never
+   * the deletion.
+   */
+  private async finishSessionDeletion(sessionId: SessionId): Promise<void> {
+    const table = this.requireTable()
+    const updatedAt = new Date().toISOString()
+    for (const [workspaceId, record] of table.entries()) {
+      if (!record.sessionIds.includes(sessionId)) continue
+      await table.put(workspaceId, {
+        ...record,
+        sessionIds: record.sessionIds.filter(id => id !== sessionId),
+        updatedAt,
+      })
+    }
+    const state = this.requireState()
+    await this.setState({
+      ...state,
+      archivedSessionIds: state.archivedSessionIds.filter(id => id !== sessionId),
+      pinnedSessionIds: state.pinnedSessionIds.filter(id => id !== sessionId),
+      pendingSessionDeletions: this.pendingDeletions().filter(id => id !== sessionId),
+    })
+    this.forgetSessionHeader(sessionId)
+    this.rebuildEntities()
+    this.ctx.emit('workspace/session-deleted', { sessionId })
+  }
+
+  /**
+   * Carry a deletion that an interrupted run left pending. The durable intent
+   * names each Session whose removal was requested, so the log removal is retried
+   * and then finished from this registry outward. A log another process still owns
+   * keeps its intent: the Session stays visible until its bytes are gone, which is
+   * what every listing already says.
+   */
+  private async resumePendingDeletions(): Promise<void> {
+    for (const sessionId of [...this.pendingDeletions()]) {
+      try {
+        await this.ctx.sessionPersistence.delete(sessionId)
+        await this.finishSessionDeletion(sessionId)
+      } catch (error: unknown) {
+        // Contained: a Session this process cannot remove stays queued with its
+        // accounting, and one failure never hides the other pending deletions.
+        this.ctx.logger.warn(
+          `workspace: deleting session ${String(sessionId)} failed: ${String(error)}`,
+        )
+      }
+    }
+  }
+
+  /** Forget one Session whose log no longer exists. */
+  private forgetSessionHeader(id: SessionId): void {
+    this.headers.delete(id)
+    this.sessionPaths.delete(id)
+    this.missingSessionPaths.delete(id)
+    this.invalidSessionPaths.delete(id)
   }
 
   private rebuildEntities(): void {
@@ -874,6 +1031,17 @@ export class WorkspaceRegistry extends Service {
       throw new Error(`cannot validate session '${id}': session persistence holds no such session`)
     }
     return header
+  }
+
+  /**
+   * The durable pending-deletion set. A state written before the field existed
+   * reaches this registry without it, exactly as the archive and pin sets did
+   * when they were introduced, so an absent set reads as empty rather than
+   * failing the open.
+   */
+  private pendingDeletions(): readonly SessionId[] {
+    const stored = this.requireState() as { readonly pendingSessionDeletions?: readonly SessionId[] }
+    return stored.pendingSessionDeletions ?? []
   }
 
   private requireTable(): KvTable<WorkspaceId, WorkspaceRecord> {

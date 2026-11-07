@@ -509,6 +509,10 @@ describe('SessionObservationReader cold path', () => {
         })
       }
 
+      delete(): Promise<boolean> {
+        return Promise.resolve(false)
+      }
+
       list(): Promise<readonly SessionPersistenceSnapshot[]> {
         return Promise.resolve([])
       }

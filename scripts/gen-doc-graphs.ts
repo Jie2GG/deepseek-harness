@@ -283,6 +283,13 @@ const SERVICE_ROLES: ServiceRole[] = [
     note: 'The host commits accepted images before session events; provider adapters resolve authorized durable references into provider-native content.',
   },
   {
+    key: 'attachmentReferences',
+    pkg: 'attachment-reclaim',
+    title: 'Session attachment reference ledger',
+    mode: 'service',
+    note: 'Committed Session events say which content-addressed objects each Session references; a reclaim pass removes an object once the last Session naming it is deleted, and keeps it while any other Session still references it.',
+  },
+  {
     key: 'fileUploads',
     pkg: 'client-file-upload',
     title: 'Agent-scoped staged file uploads',

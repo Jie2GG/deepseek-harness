@@ -86,6 +86,15 @@ export interface IWorkspaces {
    */
   archiveSession(sessionId: SessionId, options?: { readonly stopActivity?: boolean }): Promise<void>
   /**
+   * Delete a Session and its log irreversibly.
+   * @param sessionId - Session to delete.
+   * @param options - `stopActivity` asks the Host to stop the Session running work instead of refusing.
+   * @throws {WorkspaceArchiveError} when the Host refuses: a Session with running
+   *   work fails as `workspace/session-active`, and a Session whose log another
+   *   handle still owns fails as `workspace/session-held` with the deletion left pending.
+   */
+  deleteSession(sessionId: SessionId, options?: { readonly stopActivity?: boolean }): Promise<void>
+  /**
    * Unarchive a Session from the archived Session list.
    * @param sessionId - Session to unarchive.
    */
@@ -157,6 +166,11 @@ export class WorkspaceController extends Service implements IWorkspaces {
 
   async archiveSession(sessionId: SessionId, options: { readonly stopActivity?: boolean } = {}): Promise<void> {
     const result = await this.model.archiveSession(sessionId, options)
+    if (!result.ok) throw new WorkspaceArchiveError(result.error)
+  }
+
+  async deleteSession(sessionId: SessionId, options: { readonly stopActivity?: boolean } = {}): Promise<void> {
+    const result = await this.model.deleteSession(sessionId, options)
     if (!result.ok) throw new WorkspaceArchiveError(result.error)
   }
 

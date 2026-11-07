@@ -28,6 +28,7 @@ import {
   type SessionAccess, type SessionHandle,
   type SessionHandleReadResult,
   type SessionLocation, type SessionPersistenceCreateOptions,
+  type SessionPersistenceDeleteOptions,
   type SessionPersistenceListOptions, type SessionPersistenceOpenOptions,
   type SessionPersistenceSnapshot, type SessionPersistenceStatOptions,
   type SessionPersistenceRevision as PersistenceRevision,
@@ -561,6 +562,60 @@ class JsonlSessionPersistence extends SessionPersistence {
     }
     signal?.throwIfAborted()
     return snapshots
+  }
+
+  /**
+   * Remove one stored session's artifact directory and every generation inside
+   * it, including the lock file and any older generation the catalog left.
+   *
+   * The in-process write claim is taken first: a session this process is
+   * creating or appending to is refused instead of pulled out from under its
+   * handle, and no handle opens against a half-removed artifact. Each located
+   * directory then takes and releases the cross-process lease before removal,
+   * which proves no other process owned it at that moment — the lock is not
+   * held across the removal because a deleted lock file stops guarding on
+   * POSIX. Absence is not an error: a directory another caller already removed
+   * resolves as removed, and every other failure surfaces unchanged so the
+   * caller keeps its bookkeeping intact.
+   * @param id - the stored session to remove.
+   * @param options - optional cancellation.
+   * @returns `true` when a stored generation was removed, `false` when nothing
+   *   stored the session — a directory without a generation file is absence.
+   * @throws {SessionAlreadyOwnedError} when a write handle owns the session.
+   */
+  async delete(id: SessionId, options?: SessionPersistenceDeleteOptions): Promise<boolean> {
+    options?.signal?.throwIfAborted()
+    await this.ensureRootEncoding()
+    options?.signal?.throwIfAborted()
+    this.tracker.claimWrite(id)
+    try {
+      const directories: string[] = []
+      for (const project of await this.listProjectDirs(options?.signal)) {
+        options?.signal?.throwIfAborted()
+        await this.rejectLegacyFlatArtifact(project, id, options?.signal)
+        const dir = join(project, encodeSegment(id))
+        if (await this.resolveGenerationInDirectory(dir, options?.signal) !== undefined) {
+          directories.push(dir)
+        }
+      }
+      for (const dir of directories) {
+        options?.signal?.throwIfAborted()
+        const lease = await this.acquireLease(id, undefined, dir)
+        try {
+          await lease.release()
+          await rm(dir, { recursive: true })
+          /* v8 ignore next -- Windows namespace writes are already durable; POSIX coverage exercises the directory sync */
+          if (process.platform !== 'win32') await this.syncDirPosix(dirname(dir))
+        } catch (error: unknown) {
+          if (!isENOENT(error)) throw error
+        }
+      }
+      this.coldLogMemo.delete(id)
+      this.migrationPreparations.delete(id)
+      return directories.length > 0
+    } finally {
+      this.tracker.releaseClaim(id)
+    }
   }
 
   // --- handle-facing storage internals (package-private via the handle class below) ---

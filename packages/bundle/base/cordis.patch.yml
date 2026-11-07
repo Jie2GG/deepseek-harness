@@ -203,6 +203,18 @@
         writeEveryEvents: 200
         writeIntervalMs: 5000
 
+    # Which Sessions reference each content-addressed attachment, and the sweep
+    # that reclaims an object once the last Session naming it was deleted. An
+    # object shared by several Sessions survives any one deletion, and a ledger
+    # this process has not rebuilt from every stored log reclaims nothing.
+    - id: attachment-reclaim
+      name: '@deepseek-ai/dsh-attachment-reclaim'
+      config:
+        reclaimIntervalMs: 60000
+        minAgeMs: 600000
+        batchSize: 50
+        concurrency: 4
+
     - id: otel
       name: '@deepseek-ai/dsh-otel'
 

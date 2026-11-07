@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Recuperación de adjuntos",
+    "description": "Libera un objeto adjunto después de eliminar la última sesión que lo referenciaba."
+  }
+}

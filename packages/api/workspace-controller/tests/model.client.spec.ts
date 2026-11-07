@@ -4,6 +4,7 @@ import {
 } from '../src/client/index.ts'
 import type {
   WorkspaceArchiveSessionRequest,
+  WorkspaceDeleteSessionRequest,
   WorkspaceArchiveValue,
   WorkspaceCreateRequest,
   WorkspaceCreateValue,
@@ -90,6 +91,10 @@ class FakeWorkspaceRemote implements WorkspaceRemote {
     request: WorkspaceArchiveSessionRequest,
   ) => Promise<RemoteResult<WorkspaceArchiveValue>> = request =>
     Promise.resolve(remoteOk({ archivedSessionIds: [request.sessionId] }))
+  onDeleteSession: (
+    _request: WorkspaceDeleteSessionRequest,
+  ) => Promise<RemoteResult<WorkspaceArchiveValue>> = () =>
+    Promise.resolve(remoteOk({ archivedSessionIds: [] }))
   onUnarchiveSession: (
     request: WorkspaceUnarchiveSessionRequest,
   ) => Promise<RemoteResult<WorkspaceArchiveValue>> = request =>
@@ -131,6 +136,11 @@ class FakeWorkspaceRemote implements WorkspaceRemote {
   archiveSession(request: WorkspaceArchiveSessionRequest): Promise<RemoteResult<WorkspaceArchiveValue>> {
     this.record('archiveSession', request)
     return this.onArchiveSession(request)
+  }
+
+  deleteSession(request: WorkspaceDeleteSessionRequest): Promise<RemoteResult<WorkspaceArchiveValue>> {
+    this.record('deleteSession', request)
+    return this.onDeleteSession(request)
   }
 
   unarchiveSession(request: WorkspaceUnarchiveSessionRequest): Promise<RemoteResult<WorkspaceArchiveValue>> {
@@ -372,6 +382,31 @@ describe('ClientWorkspaceModel', () => {
     await expect(model.unarchiveSession(sid('fresh'))).resolves.toMatchObject({ ok: true })
     expect(model.getSnapshot().archivedSessionIds).toEqual([])
     expect(remote.calls).toContainEqual({ method: 'unarchiveSession', request: { sessionId: 'fresh' } })
+  })
+
+  it('deletes a Session, dropping its pin and installing the returned archive set', async () => {
+    const remote = new FakeWorkspaceRemote()
+    const model = modelFor(remote)
+    baseline(model, [workspace('one', [sid('gone'), sid('kept')])], [sid('gone')], [sid('gone')])
+
+    remote.onDeleteSession = () => Promise.resolve(remoteOk({ archivedSessionIds: [] }))
+    await expect(model.deleteSession(sid('gone'), { stopActivity: true }))
+      .resolves.toMatchObject({ ok: true })
+    expect(remote.calls).toContainEqual({
+      method: 'deleteSession',
+      request: { sessionId: 'gone', stopActivity: true },
+    })
+    expect(model.getSnapshot().archivedSessionIds).toEqual([])
+    // The Host drops the pin in the same durable write; the model mirrors it so
+    // no frame shows a Session both pinned and gone.
+    expect(model.getSnapshot().pinnedSessionIds).toEqual([])
+
+    remote.onDeleteSession = () => Promise.resolve(workspaceError(
+      new RemoteError('workspace/session-active', 'busy', { sessionId: sid('kept'), activity: [] }),
+    ))
+    await expect(model.deleteSession(sid('kept'))).resolves.toMatchObject({ ok: false })
+    expect(model.getSnapshot().archivedSessionIds).toEqual([])
+    expect(model.getSnapshot().items[0]?.sessionIds).toContain(sid('kept'))
   })
 
   it('keeps the latest unarchive reply when overlapping requests settle out of order', async () => {

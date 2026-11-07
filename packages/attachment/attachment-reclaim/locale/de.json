@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Anhangsrückgewinnung",
+    "description": "Gibt ein Anhangsobjekt frei, nachdem die letzte Sitzung gelöscht wurde, die es referenziert."
+  }
+}

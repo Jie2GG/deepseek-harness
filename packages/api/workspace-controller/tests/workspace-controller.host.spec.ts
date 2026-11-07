@@ -6,6 +6,7 @@ import { Context } from '@deepseek-ai/cordis'
 import SessionStore, { SessionId } from '@deepseek-ai/dsh-session'
 import Storage from '@deepseek-ai/dsh-storage'
 import { DomainFacility } from '@deepseek-ai/dsh-storage-domain'
+import { SessionAlreadyOwnedError } from '@deepseek-ai/dsh-session-persistence'
 import { RemoteError, type PeerId, type Principal, type RemoteInvocation } from '@deepseek-ai/dsh-typert-protocol'
 import WorkspaceRegistry from '@deepseek-ai/dsh-workspace'
 import type { WorkspaceId } from '@deepseek-ai/dsh-workspace/types'
@@ -51,7 +52,13 @@ function deferred<T>(): Deferred<T> {
   return { promise, resolve }
 }
 
-async function harness(options: { systemDocuments?: boolean } = {}) {
+interface HarnessOptions {
+  systemDocuments?: boolean
+  /** Failure the persistence double reports for a Session log removal. */
+  deleteFailure?: Error
+}
+
+async function harness(options: HarnessOptions = {}) {
   const root = realpathSync.native(mkdtempSync(join(tmpdir(), 'dsh-workspace-controller-')))
   tempDirs.push(root)
   const ctx = new Context()
@@ -62,7 +69,11 @@ async function harness(options: { systemDocuments?: boolean } = {}) {
   const storageDomain = new DomainFacility(ctx, { backend: 'memory', routes: {} })
   ctx.storage.mount('domain', storageDomain)
   ctx.provide('storageDomain', storageDomain)
-  ctx.provide('sessionPersistence', { list: () => Promise.resolve([]) } as never)
+  const remove = vi.fn(async (_sessionId: SessionId): Promise<boolean> => {
+    if (options.deleteFailure !== undefined) throw options.deleteFailure
+    return true
+  })
+  ctx.provide('sessionPersistence', { list: () => Promise.resolve([]), delete: remove } as never)
   await ctx.plugin(WorkspaceRegistry)
   const dispose = (): void => {}
   ctx.provide('typert', {
@@ -72,7 +83,7 @@ async function harness(options: { systemDocuments?: boolean } = {}) {
   } as never)
   new RemoteAccessService(ctx)
   const controller = new WorkspaceController(ctx, options.systemDocuments === true ? {} : { documentsDirectory: root })
-  return { controller, ctx, root, storageDomain }
+  return { controller, ctx, root, storageDomain, remove }
 }
 
 declare module '@deepseek-ai/dsh-typert-protocol' {
@@ -301,6 +312,56 @@ describe('WorkspaceController commands', () => {
     // Unarchive is idempotent: an id that is not archived is not an error.
     await expect(controller.unarchiveSession({ sessionId: session.id }))
       .resolves.toEqual({ archivedSessionIds: [] })
+  })
+
+  it('deletes a Session, refusing active and unknown ones first', async () => {
+    const { controller, ctx, root, remove } = await harness()
+    const created = await controller.create({ path: stageDir(root, 'delete') })
+    const quiet = ctx.sessions.create(SessionId('delete-me'), { meta: { cwd: created.workspace.path } })
+    const busy = ctx.sessions.create(SessionId('busy-delete'), { meta: { cwd: created.workspace.path } })
+
+    await expect(controller.deleteSession({ sessionId: SessionId('ghost') }))
+      .rejects.toMatchObject({ code: 'session/not-found', details: { sessionId: 'ghost' } })
+    expect(remove).not.toHaveBeenCalled()
+
+    // A Session the registry's providers report active is refused with what
+    // still runs, and its log survives.
+    const activity = [{ kind: 'probe' as const }]
+    const stopReporting = ctx.on('workspace/session-activity', async ({ sessionId }, next) =>
+      sessionId === busy.id ? [...activity, ...(await next())] : next())
+    await expect(controller.deleteSession({ sessionId: busy.id }))
+      .rejects.toMatchObject({ code: 'workspace/session-active', details: { sessionId: busy.id, activity } })
+    expect(remove).not.toHaveBeenCalled()
+
+    const stops: string[] = []
+    const stopListening = ctx.on('workspace/session-stop', ({ sessionId }) => { stops.push(String(sessionId)) })
+    await expect(
+      controller.deleteSession({ sessionId: busy.id, stopActivity: true }),
+    ).resolves.toEqual({ archivedSessionIds: [] })
+    expect(stops).toEqual([String(busy.id)])
+
+    await expect(controller.deleteSession({ sessionId: quiet.id }))
+      .resolves.toEqual({ archivedSessionIds: [] })
+    expect(remove.mock.calls.map(call => String(call[0]))).toEqual([String(busy.id), String(quiet.id)])
+    stopReporting()
+    stopListening()
+  })
+
+  it('maps a held write handle to a stable failure and leaves the deletion pending', async () => {
+    const { controller, ctx, root } = await harness({
+      deleteFailure: new SessionAlreadyOwnedError(SessionId('held')),
+    })
+    const created = await controller.create({ path: stageDir(root, 'held') })
+    const session = ctx.sessions.create(SessionId('held'), { meta: { cwd: created.workspace.path } })
+
+    await expect(controller.deleteSession({ sessionId: session.id }))
+      .rejects.toMatchObject({ code: 'workspace/session-held', details: { sessionId: 'held' } })
+    expect(ctx.workspaceRegistry.pendingSessionDeletionIds).toEqual(['held'])
+    // The Session is still known, so a retry re-raises the same refusal and the
+    // durable intent is written once rather than repeated.
+    await expect(controller.deleteSession({ sessionId: session.id }))
+      .rejects.toMatchObject({ code: 'workspace/session-held' })
+    expect(ctx.workspaceRegistry.pendingSessionDeletionIds).toEqual(['held'])
   })
 
   it('pins only known unarchived Sessions and unpins idempotently', async () => {

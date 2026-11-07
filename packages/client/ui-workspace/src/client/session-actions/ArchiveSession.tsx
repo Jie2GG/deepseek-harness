@@ -113,7 +113,7 @@ function ArchiveConfirmForm({ request, stopAndArchiveSession, onSettle, t }: {
     >
       <ul className={browserCss.archiveActivity} aria-label={t('archive.confirm.activity')}>
         {request.activity.map((entry, index) => (
-          <li key={`${entry.kind}-${String(index)}`}>{activityLine(entry, t)}</li>
+          <li key={`${entry.kind}-${String(index)}`}>{sessionActivityLine(entry, t)}</li>
         ))}
       </ul>
       {archiving && <div className={browserCss.deleteStatus} role="status">{t('archive.confirm.pending')}</div>}
@@ -125,9 +125,17 @@ function ArchiveConfirmForm({ request, stopAndArchiveSession, onSettle, t }: {
 /**
  * One family's line: its count and the items' labels (ids when a family
  * carries no label). A family this dictionary does not know — a provider
- * merged into the kind map — falls through to the generic line.
+ * merged into the kind map — falls through to the generic line. The stop-and-
+ * archive and stop-and-delete dialogs read the same reported work, so they
+ * share this rendering.
+ * @param entry - one reported activity family.
+ * @param t - the workspace dictionary seat.
+ * @returns the localized line for that family.
  */
-function activityLine(entry: SessionActivity, t: SessionArchiveConfirmProps['t']): string {
+export function sessionActivityLine(
+  entry: SessionActivity,
+  t: SessionArchiveConfirmProps['t'],
+): string {
   const items = entry.items ?? []
   const n = items.length
   const names = items.map(item => item.label ?? item.id).join(t('archive.confirm.listSeparator'))

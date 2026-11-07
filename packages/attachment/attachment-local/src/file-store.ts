@@ -77,9 +77,24 @@ export function storedFilePath(root: string, ref: FileAttachmentRef): string {
   return join(root, 'files', sha256.slice(0, 2), sha256, ref.name)
 }
 
-/** Canonical object path shared by every display name for one digest. */
-function storedFileObjectPath(root: string, sha256: string): string {
+/**
+ * Canonical object path shared by every display name for one digest.
+ * @param root - absolute `DSH_HOME/attachments/v1` root.
+ * @param sha256 - lowercase 64-hex digest naming the object.
+ * @returns provider-local path without reading the object.
+ */
+export function storedFileObjectPath(root: string, sha256: string): string {
   return join(root, 'file-objects', sha256.slice(0, 2), sha256)
+}
+
+/**
+ * Directory holding every sanitized display name linked to one digest.
+ * @param root - absolute `DSH_HOME/attachments/v1` root.
+ * @param sha256 - lowercase 64-hex digest whose aliases are named.
+ * @returns provider-local directory path without reading it.
+ */
+export function storedFileAliasDirectory(root: string, sha256: string): string {
+  return join(root, 'files', sha256.slice(0, 2), sha256)
 }
 
 /**

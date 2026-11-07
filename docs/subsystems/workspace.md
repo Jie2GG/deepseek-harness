@@ -366,6 +366,16 @@ Host service backing the generated `ctx.remote.workspace` namespace.
 @Remote('archiveSession') archiveSession(request: WorkspaceArchiveSessionRequest): Promise<WorkspaceArchiveValue>
 
 /**
+ * Remove one Session and its log irreversibly, then drop it from Workspace
+ * accounting. A Session with running work is refused until the caller asks for
+ * the stop, and a Session whose log another handle still owns stays pending
+ * rather than half-deleted.
+ * @param request - Session identity to delete and whether to stop its work.
+ * @returns the complete resulting archive set.
+ */
+@Remote('deleteSession') deleteSession(request: WorkspaceDeleteSessionRequest): Promise<WorkspaceArchiveValue>
+
+/**
  * Restore one archived Session to Workspace grouping surfaces.
  * @param request - Session identity to unarchive.
  * @returns the complete resulting archive set.
@@ -561,6 +571,31 @@ archiveSession(sessionId: SessionId, options: ArchiveSessionOptions = {}): Promi
 unarchiveSession(sessionId: SessionId): Promise<void>
 
 /**
+ * Delete one Session irreversibly: its log goes first, then every trace of
+ * it in this registry.
+ *
+ * The Session must exist, and without `stopActivity` it must also be
+ * inactive — the `workspace/session-activity` waterfall is asked once, and any
+ * reported activity rejects before anything is written. A pending-deletion
+ * intent is recorded before the log removal, and that removal is the commit
+ * point every read face follows: listings and search are projected from stored
+ * logs, so a Session whose log survives an interrupted delete stays visible
+ * rather than vanishing with its bytes still on disk. Once the log is gone this
+ * registry drops the Session from its workspace record and from the archive and
+ * pin sets, forgets its header, and emits `workspace/session-deleted` for the
+ * records other packages derive from it. Deletion removes only this Session:
+ * the descendants it spawned keep their own self-contained logs.
+ * @param sessionId - the Session to delete.
+ * @param options - whether running work is stopped instead of refusing.
+ * @returns resolution after the log removal and every accounting write are durable.
+ * @throws {WorkspaceUnknownSessionError} when no live Session or stored log names it.
+ * @throws {WorkspaceActiveSessionError} when work still runs and `stopActivity` is unset.
+ * @throws {SessionAlreadyOwnedError} when a write handle still owns the log: the
+ *   intent stays durable, so a later start completes the deletion.
+ */
+deleteSession(sessionId: SessionId, options: DeleteSessionOptions = {}): Promise<void>
+
+/**
  * Pin one session durably, prepending it to the registry-global pin set.
  * The session must exist (live or in session persistence) and must not be
  * archived. An already pinned id resolves without writing or reordering.
@@ -615,6 +650,27 @@ Ask the composed providers what still runs for a session before it is archived. 
  * @mode waterfall
  */
 'workspace/session-activity'( request: SessionActivityRequest, next: () => Promise<readonly SessionActivity[]>, ): Promise<readonly SessionActivity[]>
+```
+
+Source: [`packages/workspace/workspace/src/index.ts`](../../packages/workspace/workspace/src/index.ts)
+
+<a id="workspacesession-deleted--emit"></a>
+
+#### `workspace/session-deleted` — emit
+
+Announce that one Session log was removed and this registry dropped every trace of it, so each other owner of a derived record about that Session can retire its copy. The removal is already durable when this dispatches, and the Session is no longer in any workspace, archive, or pin set. Listeners never veto it: a listener failure is logged and the rest still run.
+
+```ts cordis-catalog
+/**
+ * Announce that one Session log was removed and this registry dropped every
+ * trace of it, so each other owner of a derived record about that Session can
+ * retire its copy. The removal is already durable when this dispatches, and
+ * the Session is no longer in any workspace, archive, or pin set. Listeners
+ * never veto it: a listener failure is logged and the rest still run.
+ * @param notice - the Session whose log no longer exists.
+ * @mode emit
+ */
+'workspace/session-deleted'(notice: SessionDeletedNotice): void
 ```
 
 Source: [`packages/workspace/workspace/src/index.ts`](../../packages/workspace/workspace/src/index.ts)

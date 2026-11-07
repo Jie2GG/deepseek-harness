@@ -420,6 +420,25 @@ abstract stat(id: SessionId, options?: SessionPersistenceStatOptions): Promise<S
  * @returns one snapshot per stored session.
  */
 abstract list(options?: SessionPersistenceListOptions): Promise<readonly SessionPersistenceSnapshot[]>
+
+/**
+ * Remove one stored session's durable artifact and every generation of it.
+ *
+ * Removal is irreversible: no backend keeps a recoverable copy, and the
+ * operation is idempotent, so a session another caller already removed is not
+ * an error. Once it resolves, the session is absent from `stat`, `list`, and
+ * `open`; a session this process still has open for writing is never removed
+ * from under its handle. Backends take no ownership of any other store a
+ * session's events mention: attachments, spill files, and derived indexes
+ * are each their owner's to reconcile.
+ * @param id - the stored session to remove.
+ * @param options - optional cancellation.
+ * @returns `true` when this call removed the artifact, `false` when the
+ *   session was already absent.
+ * @throws {SessionAlreadyOwnedError} when a write handle in this process or
+ *   another one still owns the session.
+ */
+abstract delete(id: SessionId, options?: SessionPersistenceDeleteOptions): Promise<boolean>
 ```
 
 Types: [SessionId](core.md)

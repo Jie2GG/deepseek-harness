@@ -76,6 +76,7 @@
     "@deepseek-ai/dsh-experimental-forge-bundle": "workspace:*"
   },
   "dependencies": {
+    "@deepseek-ai/dsh-attachment-reclaim": "workspace:*",
     "@deepseek-ai/dsh-message-quotes": "workspace:*"
   }
 }

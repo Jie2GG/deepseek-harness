@@ -11,7 +11,7 @@ import { contextMenuHook } from '@deepseek-ai/dsh-client-test-runtime'
 import { afterEach, describe, expect, it, onTestFinished, vi } from 'vitest'
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import type { SessionListState, SessionSummary } from '@deepseek-ai/dsh-api-session-controller/client'
-import type { WorkspaceId, WorkspaceSnapshot } from '@deepseek-ai/dsh-api-workspace-controller/client'
+import type { SessionActivity, WorkspaceId, WorkspaceSnapshot } from '@deepseek-ai/dsh-api-workspace-controller/client'
 import type { SessionStatusSnapshot } from '@deepseek-ai/dsh-client-ui-session/client'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import { createSnapshotStore } from '@deepseek-ai/dsh-client-store'
@@ -25,11 +25,13 @@ import { en as commonEn } from '@deepseek-ai/dsh-client-locale/src/locales/en.ts
 import { zh as commonZh } from '@deepseek-ai/dsh-client-locale/src/locales/zh.ts'
 import type {
   RowToast, RowToastState, SessionArchiveConfirmInjected, SessionArchiveConfirmRequest,
+  SessionDeleteConfirmInjected, SessionDeleteConfirmRequest,
   SessionRenameDialogInjected, SessionRenameTarget,
 } from '../src/client/contract/slots.ts'
 import {
   ArchiveSessionRowButton, SessionArchiveConfirmDialog,
 } from '../src/client/session-actions/ArchiveSession.tsx'
+import { DeleteSessionRowButton, SessionDeleteConfirmDialog } from '../src/client/session-actions/DeleteSession.tsx'
 import { PinSessionRowButton } from '../src/client/session-actions/PinSession.tsx'
 import { SessionRenameDialog } from '../src/client/session-actions/RenameSession.tsx'
 import { RowActionToast } from '../src/client/session-actions/RowActionToast.tsx'
@@ -162,6 +164,83 @@ describe('archive action', () => {
     fireEvent.click(screen.getByRole('button', { name: '取消归档' }))
     expect(archive.unarchiveSession).toHaveBeenCalledWith(sid('one'))
     expect(archive.archiveSession).toHaveBeenCalledOnce()
+  })
+})
+
+describe('delete action', () => {
+  const deleteShare = () => ({ requestSessionDelete: vi.fn() })
+
+  it('offers no delete button without access and asks instead of deleting', () => {
+    const denied = render(
+      <DeleteSessionRowButton {...actionRow} requestSessionDelete={vi.fn()}
+        useSessionAccess={vi.fn(() => false)} />,
+    )
+    expect(denied.container.innerHTML).toBe('')
+
+    const share = deleteShare()
+    render(<DeleteSessionRowButton {...actionRow} {...share} />)
+    fireEvent.click(screen.getByRole('button', { name: '删除对话' }))
+    expect(share.requestSessionDelete).toHaveBeenCalledWith(sid('one'))
+  })
+
+  /** The dialog over a test-owned request source, settling the way apply does. */
+  function deleteDialog(deleteSessionNow: SessionDeleteConfirmInjected['deleteSessionNow']) {
+    const request = createSnapshotStore<SessionDeleteConfirmRequest | null>(null)
+    const settleSessionDelete = vi.fn(() => { request.set(null) })
+    render(
+      <SessionDeleteConfirmDialog
+        {...overlay}
+        useDeleteRequest={bindSnapshotSelector(request)}
+        settleSessionDelete={settleSessionDelete}
+        deleteSessionNow={deleteSessionNow}
+      />,
+    )
+    const ask = (sessionId: string, activity: readonly SessionActivity[] = []): void => {
+      act(() => { request.set({ sessionId: sid(sessionId), displayTitle: 'Session title', activity }) })
+    }
+    return { ask, settleSessionDelete, request }
+  }
+
+  it('renders nothing until a delete is asked', () => {
+    deleteDialog(vi.fn(async () => {}))
+    expect(screen.queryByRole('dialog')).toBeNull()
+  })
+
+  it('holds the delete until the acknowledgement is given, then deletes without stopping', async () => {
+    const deleteSessionNow = vi.fn(async () => {})
+    const { ask } = deleteDialog(deleteSessionNow)
+    ask('one')
+    const confirm = screen.getByRole<HTMLButtonElement>('button', { name: '删除' })
+    expect(confirm.disabled).toBe(true)
+    fireEvent.click(screen.getByRole('checkbox'))
+    expect(confirm.disabled).toBe(false)
+    await act(async () => { fireEvent.click(confirm) })
+    expect(deleteSessionNow).toHaveBeenCalledWith(sid('one'), {})
+    expect(screen.queryByRole('dialog')).toBeNull()
+  })
+
+  it('names the running work and asks to stop it first, reporting a Host failure in place', async () => {
+    const deleteSessionNow = vi.fn(async () => { throw new Error('writer still open') })
+    const { ask } = deleteDialog(deleteSessionNow)
+    ask('one', [{ kind: 'turn' }])
+    expect(screen.getByRole('list', { name: '这条对话仍有正在进行的工作：' })).toBeTruthy()
+    expect(screen.getByText('进行中的回合')).toBeTruthy()
+    fireEvent.click(screen.getByRole('checkbox'))
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: '停止并删除' })) })
+    expect(deleteSessionNow).toHaveBeenCalledWith(sid('one'), { stopActivity: true })
+    expect(screen.getByRole('alert').textContent).toContain('writer still open')
+    // The dialog stays open so the user can retry or cancel.
+    expect(screen.queryByRole('dialog')).toBeTruthy()
+  })
+
+  it('cancelling settles the request and sends nothing', () => {
+    const deleteSessionNow = vi.fn(async () => {})
+    const { ask, settleSessionDelete } = deleteDialog(deleteSessionNow)
+    ask('one')
+    fireEvent.click(screen.getByRole('button', { name: '取消' }))
+    expect(settleSessionDelete).toHaveBeenCalledOnce()
+    expect(deleteSessionNow).not.toHaveBeenCalled()
+    expect(screen.queryByRole('dialog')).toBeNull()
   })
 })
 

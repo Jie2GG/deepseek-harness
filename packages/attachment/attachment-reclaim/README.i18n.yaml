@@ -1,0 +1,64 @@
+# Bilingual-pair consistency record for README.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write packages/attachment/attachment-reclaim/README.md
+/:
+  en: 96214d01af904c80
+  zh: faa18bfc12e7def2
+/deepseek-ai-dsh-attachment-reclaim:
+  en: a5b561c90279781e
+  zh: 4fad3e3227806f6b
+/deepseek-ai-dsh-attachment-reclaim/summary:
+  en: d5d052b8c1aeb617
+  zh: 33758042233fb1a6
+/deepseek-ai-dsh-attachment-reclaim/table-of-contents:
+  en: d152484eb41ac6b4
+  zh: 09388d293f9be9cb
+/deepseek-ai-dsh-attachment-reclaim/use-this-package:
+  en: 2fdd787a5289068d
+  zh: 8129d193adcbd521
+/deepseek-ai-dsh-attachment-reclaim/use-this-package/when-to-choose-it:
+  en: 89691019fcac9b11
+  zh: 4e2d4360980d4efa
+/deepseek-ai-dsh-attachment-reclaim/use-this-package/minimal-configuration:
+  en: 2ba8f6ee7acebf9c
+  zh: 93ceac954c1f1f06
+/deepseek-ai-dsh-attachment-reclaim/use-this-package/what-becomes-durable:
+  en: 179dbdc302d09aad
+  zh: 5971bfbe3b067df0
+/deepseek-ai-dsh-attachment-reclaim/use-this-package/observable-behavior-and-failures:
+  en: 38c49873f933f593
+  zh: 6e35d4b744bba150
+/deepseek-ai-dsh-attachment-reclaim/understand-the-implementation:
+  en: c9bb10fcd58e0a0c
+  zh: 5a6755cee38e74ad
+/deepseek-ai-dsh-attachment-reclaim/understand-the-implementation/design-concept:
+  en: 8688cf8f98beb8e7
+  zh: aa403fd60acf45c7
+/deepseek-ai-dsh-attachment-reclaim/understand-the-implementation/source-map:
+  en: dff3cf54001779c9
+  zh: 8298eb6f9d02b7ae
+/deepseek-ai-dsh-attachment-reclaim/further-exploration:
+  en: 4620f2bf43524b70
+  zh: a76330c05b29e4d0
+/deepseek-ai-dsh-attachment-reclaim/model-experience:
+  en: 215e7ba838619b7b
+  zh: a311da3843709f90
+/deepseek-ai-dsh-attachment-reclaim/model-experience/a-session-is-deleted:
+  en: a6f89c14d3c82c42
+  zh: aa13dbe4cceb2583
+/deepseek-ai-dsh-attachment-reclaim/model-experience/a-session-is-deleted/what-the-model-sees:
+  en: 52f88764ab3c1d02
+  zh: 5d209db1fb4209e0
+/deepseek-ai-dsh-attachment-reclaim/model-experience/a-session-is-deleted/token-effect:
+  en: fd68058322e92590
+  zh: 55c29f0180a3a0b2
+/deepseek-ai-dsh-attachment-reclaim/model-experience/a-session-is-deleted/kv-cache-effect:
+  en: dcee35877f25dd14
+  zh: 9fd385bce85a90e7
+/deepseek-ai-dsh-attachment-reclaim/known-limitations-and-deferred-work:
+  en: 3eaddcea42ee476f
+  zh: 18a039a4fe788fab
+/deepseek-ai-dsh-attachment-reclaim/known-limitations-and-deferred-work/dev-note:
+  en: ac4045106e179c0a
+  zh: e4255d91cd6e071a

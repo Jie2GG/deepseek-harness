@@ -610,5 +610,82 @@ export function runPersistenceContract(name: string, make: () => Promise<Contrac
         await dispose()
       }
     })
+
+    it('delete removes one durable session from every read face and is idempotent', async () => {
+      const backend = await make()
+      const { persistence, dispose } = backend
+      try {
+        const m = meta('deleted-log', '/work')
+        const writer = await persistence.create(m)
+        await writer.append(oneTurnLog())
+        await writer.flush()
+        await writer.close()
+
+        expect(await persistence.delete(m.id)).toBe(true)
+        expect(await persistence.stat(m.id)).toBeUndefined()
+        expect((await persistence.list()).some(s => s.header.id === m.id)).toBe(false)
+        await expect(persistence.open(m.id, 'read')).rejects.toThrow(SessionPersistenceNotFoundError)
+
+        // A second removal reports absence instead of failing, and removes nothing else.
+        expect(await persistence.delete(m.id)).toBe(false)
+        expect(await persistence.stat(m.id)).toBeUndefined()
+
+        if (backend.reopen !== undefined) {
+          const other = await backend.reopen()
+          try {
+            expect(await other.persistence.stat(m.id)).toBeUndefined()
+            expect(await other.persistence.list()).toEqual([])
+          } finally {
+            await other.dispose()
+          }
+        }
+      } finally {
+        await dispose()
+      }
+    })
+
+    it('delete refuses a session an open write handle owns and leaves its log intact', async () => {
+      const { persistence, dispose } = await make()
+      try {
+        const m = meta('held-log', '/work')
+        const writer = await persistence.create(m)
+        await writer.append(oneTurnLog())
+        await writer.flush()
+
+        await expect(persistence.delete(m.id)).rejects.toThrow(SessionAlreadyOwnedError)
+        const held = await persistence.stat(m.id)
+        expect(held).toBeDefined()
+
+        await writer.close()
+        expect(await persistence.delete(m.id)).toBe(true)
+        expect(await persistence.stat(m.id)).toBeUndefined()
+      } finally {
+        await dispose()
+      }
+    })
+
+    it('delete treats a created session that never materialized as held, then as absent', async () => {
+      const backend = await make()
+      const { persistence, dispose } = backend
+      try {
+        const m = meta('never-materialized', '/work')
+        const writer = await persistence.create(m)
+        // This process observes it, so it is still a session under a handle.
+        await expect(persistence.delete(m.id)).rejects.toThrow(SessionAlreadyOwnedError)
+        await writer.close()
+        // Closing an unmaterialized create erases the session, so removal is absence.
+        expect(await persistence.delete(m.id)).toBe(false)
+        if (backend.reopen !== undefined) {
+          const other = await backend.reopen()
+          try {
+            expect(await other.persistence.list()).toEqual([])
+          } finally {
+            await other.dispose()
+          }
+        }
+      } finally {
+        await dispose()
+      }
+    })
   })
 }

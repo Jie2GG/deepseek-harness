@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Récupération des pièces jointes",
+    "description": "Libère un objet joint après la suppression de la dernière session qui le référençait."
+  }
+}

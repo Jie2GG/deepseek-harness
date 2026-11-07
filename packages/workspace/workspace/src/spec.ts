@@ -53,6 +53,10 @@ const workspacePendingMutation = z.discriminatedUnion('operation', [
  * (most recently pinned first); pinning and archival are mutually
  * exclusive, so archiving drops the session's pin. Both session sets are
  * defaulted so records written before the fields parse unchanged.
+ * `pendingSessionDeletions` records a Session whose log removal was requested
+ * but not finished: the durable set is what a restart uses to carry the removal
+ * through, so an interrupted delete leaves no Session that looks alive while its
+ * accounting was already dropped.
  */
 export const workspaceDomainState = z.object({
   initialized: z.boolean(),
@@ -61,6 +65,7 @@ export const workspaceDomainState = z.object({
   workspaceIds: z.array(workspaceId),
   archivedSessionIds: z.array(sessionId).default([]),
   pinnedSessionIds: z.array(sessionId).default([]),
+  pendingSessionDeletions: z.array(sessionId).default([]),
   pendingMutation: workspacePendingMutation.optional(),
 })
 
@@ -78,7 +83,13 @@ export const workspaceDomainSpec = defineDomain({
   version: 2,
   global: {
     schema: workspaceDomainState,
-    initial: { initialized: false, workspaceIds: [], archivedSessionIds: [], pinnedSessionIds: [] },
+    initial: {
+      initialized: false,
+      workspaceIds: [],
+      archivedSessionIds: [],
+      pinnedSessionIds: [],
+      pendingSessionDeletions: [],
+    },
   },
   tables: { workspaces: domainTable<WorkspaceId, WorkspaceRecord>(workspaceRecord) },
 })

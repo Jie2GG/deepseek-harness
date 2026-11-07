@@ -20,6 +20,7 @@ class TestPersistence extends SessionPersistence {
   open(): Promise<SessionHandle> { return Promise.reject(new Error('not used')) }
   flush(): Promise<void> { return Promise.resolve() }
   stat(): Promise<SessionPersistenceSnapshot | undefined> { return Promise.resolve(undefined) }
+  delete(): Promise<boolean> { return Promise.resolve(false) }
   list(): Promise<readonly SessionPersistenceSnapshot[]> { return Promise.resolve([]) }
 }
 

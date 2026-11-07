@@ -30,6 +30,7 @@ Every package below exports a Cordis plugin that a bundle patch can name in a Lo
 | Package | Config | Description |
 |---|---|---|
 | `@deepseek-ai/dsh-attachment-local` | yes | Private content-addressed DSH_HOME attachment storage |
+| `@deepseek-ai/dsh-attachment-reclaim` | yes | Session attachment reference ledger (ctx.attachmentReferences) and the sweep that reclaims objects no Session references any more |
 
 ## boot
 
