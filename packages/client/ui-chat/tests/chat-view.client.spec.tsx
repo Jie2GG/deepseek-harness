@@ -433,7 +433,7 @@ function makeHarness(
     read: () => savedScroll,
   }
   const forkAt = vi.fn()
-  const editAt = vi.fn(async () => null as string | null)
+  const editAt = vi.fn(async () => ({ refusal: null, cleared: 0 }))
   // Rows and the harness must observe the same chat-store instance.
   const chat = createChatStore().create()
   const transcriptView = createSnapshotStore<TranscriptViewMode>('compact')
@@ -3664,9 +3664,15 @@ describe('ChatView', () => {
     fireEvent.click(view.getByRole('button', { name: '编辑消息' }))
     const field = view.getByRole('textbox', { name: '编辑这条消息' })
     fireEvent.change(field, { target: { value: 'corrected ask' } })
+    h.editAt.mockResolvedValueOnce({ refusal: null, cleared: 2 })
     fireEvent.keyDown(field, { key: 'Enter', ctrlKey: true })
     await waitFor(() => {
       expect(h.editAt.mock.calls).toEqual([[1, [{ type: 'text', text: 'corrected ask' }]]])
+    })
+    // Follow-ups that had been queued behind the rewritten prompt disappear with
+    // the discarded history, so the bubble says what happened to them.
+    await waitFor(() => {
+      expect(view.getByText('已清除排在后面的 2 条待发消息')).toBeTruthy()
     })
   })
 

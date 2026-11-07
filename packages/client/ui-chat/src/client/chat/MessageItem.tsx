@@ -369,6 +369,9 @@ export const UserMessageNodeView = memo(function UserMessageNodeView({
     && turn?.status === 'closed' && isHumanPrompt(data.source)
   const [draft, setDraft] = useState<string | null>(null)
   const [refusal, setRefusal] = useState<string | null>(null)
+  // Queued messages the accepted rewrite removed, so the bubble can explain
+  // why follow-ups the person had already typed are gone.
+  const [cleared, setCleared] = useState(0)
   const closeEditor = (): void => {
     setDraft(null)
     setRefusal(null)
@@ -376,7 +379,13 @@ export const UserMessageNodeView = memo(function UserMessageNodeView({
   const sendDraft = async (): Promise<void> => {
     const text = (draft ?? '').trim()
     if (text === '') return
-    setRefusal(await editAt(data.seq, withRewrittenText(data.content, text)))
+    const outcome = await editAt(data.seq, withRewrittenText(data.content, text))
+    if (outcome.refusal !== null) {
+      setRefusal(outcome.refusal)
+      return
+    }
+    setCleared(outcome.cleared)
+    setDraft(null)
   }
   return (
     <UserStyleBubble
@@ -391,19 +400,26 @@ export const UserMessageNodeView = memo(function UserMessageNodeView({
       {...data.skillNames === undefined ? {} : { skillNames: data.skillNames }}
       actions={text => draft === null
         ? (
-          <MessageIconActions
-            text={text}
-            time={data.time}
-            clock="start"
-            className={css.actions}
-            onEdit={editable
-              ? () => {
-                setRefusal(null)
-                setDraft(text)
-              }
-              : undefined}
-            t={t}
-          />
+          <>
+            <MessageIconActions
+              text={text}
+              time={data.time}
+              clock="start"
+              className={css.actions}
+              onEdit={editable
+                ? () => {
+                  setRefusal(null)
+                  setDraft(text)
+                }
+                : undefined}
+              t={t}
+            />
+            {cleared === 0 ? null : (
+              <div className={css.editNotice}>
+                {t('message.editCleared', { count: cleared })}
+              </div>
+            )}
+          </>
         )
         : (
           <div className={css.editForm}>

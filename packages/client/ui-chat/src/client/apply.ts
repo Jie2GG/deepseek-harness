@@ -311,7 +311,9 @@ export function apply(ctx: Context): void {
           },
           editAt: async (seq, content) => {
             const result = await session.editMessage({ targetSeq: SessionSeq(seq), content })
-            return result.ok ? null : result.error.message
+            return result.ok
+              ? { refusal: null, cleared: result.value.clearedQueueCount }
+              : { refusal: result.error.message, cleared: 0 }
           },
         }
       },

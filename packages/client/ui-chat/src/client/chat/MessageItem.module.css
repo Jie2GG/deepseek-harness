@@ -412,6 +412,12 @@
   background: var(--dsw-alias-interactive-bg-hover);
 }
 
+.editNotice {
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 12px;
+  line-height: 18px;
+}
+
 .editRefusal {
   color: var(--dsw-alias-state-error-primary);
   font-size: 12px;

@@ -235,6 +235,18 @@ export interface UserBeforeOwnerProps {
   readonly kind: 'user' | 'steering'
 }
 
+/**
+ * What one prompt rewrite did: either the Host's refusal, or how many queued
+ * messages the accepted rewrite removed because they followed the rewritten
+ * prompt. The count drives the notice that explains where those messages went.
+ */
+export interface PromptEditOutcome {
+  /** The Host's refusal reason; null once the rewrite is accepted. */
+  readonly refusal: string | null
+  /** Pending inbox items removed by an accepted rewrite; zero on refusal. */
+  readonly cleared: number
+}
+
 /** Stable owner currency delivered to a keyed Chat renderer. */
 export interface ChatNodeOwnerProps {
   /** Renderer-owned Node portion selected by the grouping Definition. */
@@ -249,9 +261,9 @@ export interface ChatNodeOwnerProps {
    * Session is idle.
    * @param seq - event position of the prompt's current surface node.
    * @param content - rewritten blocks: edited text plus the prompt's own attachments.
-   * @returns the Host's refusal reason, or null once the edit is accepted.
+   * @returns the refusal reason, or the count of queued messages the rewrite removed.
    */
-  editAt: (seq: number, content: readonly ContentBlock[]) => Promise<string | null>
+  editAt: (seq: number, content: readonly ContentBlock[]) => Promise<PromptEditOutcome>
   /** Session-authorized image loader supplied by the Chat view. */
   loadImage: MessageImageLoader
   /** Turn-process state when this Node belongs to a projected Turn. */
@@ -366,7 +378,7 @@ export interface ChatViewInjected {
     read: () => ChatScrollPosition | null
   }
   forkAt: (seq: number) => void
-  editAt: (seq: number, content: readonly ContentBlock[]) => Promise<string | null>
+  editAt: (seq: number, content: readonly ContentBlock[]) => Promise<PromptEditOutcome>
 }
 
 /** Session-owned node sources shared with the view, plus the flow's connection state. */
