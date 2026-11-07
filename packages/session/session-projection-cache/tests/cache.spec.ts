@@ -16,6 +16,7 @@ import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { Context } from '@deepseek-ai/cordis'
 import { z } from 'zod'
+import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import SessionStore, {
   SESSION_FORMAT_VERSION,
   Session,
@@ -43,6 +44,7 @@ declare module '@deepseek-ai/dsh-session-projection/types' {
     'cache-test/marks': { marks: string[] }
     'cache-test/secondary-marks': { marks: string[] }
     'cache-test/marks3': { marks: string[] }
+    'cache-test/rewound-marks': { marks: string[] }
     'cache-test/summary-excluded': SessionProjectionSummaryExcluded<{ n: number }>
     title: string | null
   }
@@ -70,6 +72,20 @@ const marksUnit = (stateVersion = 1) => ({
   },
   stateVersion,
 }) satisfies ProjectionDefinition<'cache-test/marks', MarksState>
+
+/** The `cache-test/marks` unit rewound by a human-message edit. */
+const rewoundMarksUnit = {
+  key: 'cache-test/rewound-marks',
+  rewindable: true,
+  stateSchema: z.object({ marks: z.array(z.string()) }).nullable(),
+  init: () => null,
+  apply: (state, event) => (event.type === 'cache-test/mark' ? (event).data : state),
+  wire: {
+    viewSchema: z.object({ marks: z.array(z.string()) }),
+    view: state => state ?? { marks: [] },
+  },
+  stateVersion: 1,
+} satisfies ProjectionDefinition<'cache-test/rewound-marks', MarksState>
 
 const marks3Unit = {
   key: 'cache-test/marks3',
@@ -371,6 +387,52 @@ describe('SessionProjectionCache write policy', () => {
       'cache-test/marks': { ver: 1, seq: -1, val: null },
     })
   })
+
+  it('refolds a rewound row whose edit stamp trails the stored log', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'dsh-projcache-'))
+    roots.push(root)
+    const id = SessionId('edit-stamp')
+    const meta = headerOf(id, 9)
+    // A row written before the edit and stamped at nothing: its folded prefix
+    // still counts history the edit voids, so it cannot seed the value.
+    await seedRecord(root, id, {
+      'cache-test/rewound-marks': { ver: 1, seq: SessionSeq(1), val: { marks: ['discarded'] } },
+    }, {
+      formatVersion: SESSION_FORMAT_VERSION,
+      createdAt: 9,
+      isSeeded: false,
+      inheritedEventCount: SessionLogOffset(0),
+    })
+    const { ctx } = await harness({ root })
+    await ctx.sessionProjections.register(rewoundMarksUnit)
+    const events: SessionEvent[] = [
+      {
+        type: 'user/message', seq: SessionSeq(0), time: 0,
+        data: createUserMessage({ content: [{ type: 'text', text: 'ask' }], source: { kind: 'user' } }),
+        surfaceOp: 'append',
+      },
+      { type: 'cache-test/mark', seq: SessionSeq(1), time: 1, data: { marks: ['discarded'] } },
+      { type: 'turn/start', seq: SessionSeq(2), time: 2, data: { turn: 1 } },
+      {
+        type: 'user/message', seq: SessionSeq(3), time: 3,
+        data: createUserMessage({
+          content: [{ type: 'text', text: 'corrected ask' }],
+          source: { kind: 'user-edit', editedSeq: SessionSeq(0), editCount: 1 },
+        }),
+        surfaceOp: { op: 'replace', startSeq: SessionSeq(0), endSeq: SessionSeq(0) },
+        sourceEventSeqs: [SessionSeq(0)],
+      },
+    ]
+    const written = whenWritten(ctx, id)
+    const snapshot = ctx.sessionProjectionCache.coldSnapshot(meta, SessionLogOffset(0), events)
+    await written
+    // The edit rewinds the conversation-produced unit to its empty value, while the
+    // settings unit keeps its own fold of the mark that the edit voided.
+    expect(snapshot.values['cache-test/rewound-marks']).toEqual({ marks: [] })
+    expect(snapshot.values['cache-test/marks']).toEqual({ marks: ['discarded'] })
+    expect((await storedRows(root, id))?.['cache-test/rewound-marks']?.edits).toBe(1)
+  })
+
 
   it('flushes when the in-turn event count reaches the configured threshold', async () => {
     const { ctx, root } = await harness({ config: { writeEveryEvents: 3, writeIntervalMs: 60_000 } })

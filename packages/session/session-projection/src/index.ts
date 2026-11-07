@@ -221,9 +221,10 @@ export interface ProjectionCheckpointRow {
   /**
    * Human-message edits folded into `val`, present only on a rewound unit. The
    * stamp detects a row whose state predates an edit: its folded prefix would
-   * still contain history the user rewrote away, so `restore` discards it.
+   * still contain history the user rewrote away, so `restore` discards it. A row
+   * stored before the stamp exists decodes to `undefined`, which counts as no edits.
    */
-  edits?: number
+  edits?: number | undefined
 }
 
 /** Checkpoint rows keyed by projection key (one session's persisted cache value). */
