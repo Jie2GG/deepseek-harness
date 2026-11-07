@@ -41,6 +41,8 @@ interface HarnessOptions {
   liveSessions?: SessionHeader[]
   sessionStore?: boolean
   backend?: StorageBackend
+  /** Hook a test uses to install listeners before the registry starts. */
+  beforeStart?: (ctx: Context) => void
 }
 
 /** Boot the real storage/domain/registry composition over controllable header-only peers. */
@@ -64,6 +66,7 @@ async function harness(options: HarnessOptions = {}) {
     return true
   })
   ctx.provide('sessionPersistence', { list, open, stat, delete: remove } as never)
+  options.beforeStart?.(ctx)
 
   if (options.sessionStore === true) {
     await ctx.plugin(SessionStore)
@@ -1319,6 +1322,37 @@ describe('registry-global session delete', () => {
     expect(warn).toHaveBeenCalledWith(expect.stringContaining('turn cancel exploded'))
   })
 
+  it('releases every in-process owner before it removes the log', async () => {
+    const dir = await makeDir('delete-release')
+    const result = await harness({ sessions: [header('gone', dir, 100)] })
+    const releasedWhileOwned: boolean[] = []
+    result.ctx.on('workspace/session-release', ({ sessionId }) => {
+      releasedWhileOwned.push(sessionId === 'gone' && result.remove.mock.calls.length === 0)
+    })
+
+    await result.registry.deleteSession(SessionId('gone'))
+
+    // The release is asked while the log still exists, so an owner that awaits it
+    // can drain and close its write handle before the removal claims it.
+    expect(releasedWhileOwned).toEqual([true])
+    expect(result.remove.mock.calls).toEqual([['gone']])
+  })
+
+  it('removes the log anyway when an owner cannot release, and logs the failure', async () => {
+    const dir = await makeDir('delete-release-failed')
+    const result = await harness({ sessions: [header('gone', dir, 100)] })
+    result.ctx.on('workspace/session-release', () => { throw new Error('owner refused to release') })
+    const warn = vi.spyOn(result.ctx.logger, 'warn').mockImplementation(() => {})
+
+    await result.registry.deleteSession(SessionId('gone'))
+
+    // One failing owner never skips the removal: a log that stays owned still
+    // fails at the commit point and keeps its intent, and a released one goes.
+    expect(result.remove.mock.calls).toEqual([['gone']])
+    expect(result.registry.pendingSessionDeletionIds).toEqual([])
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('owner refused to release'))
+  })
+
   it('keeps the pending intent and the visible row when the log cannot be removed', async () => {
     const dir = await makeDir('delete-held')
     const result = await harness({
@@ -1340,8 +1374,18 @@ describe('registry-global session delete', () => {
     const pool = storedPool([[id, record(dir, ['gone', 'kept'])]], {
       initialized: true, workspaceIds: [id], pendingSessionDeletions: ['gone'],
     })
-    const result = await harness({ pool, sessions: [header('kept', dir)] })
+    const releases: SessionId[] = []
+    const result = await harness({
+      pool,
+      sessions: [header('kept', dir)],
+      beforeStart: ctx => ctx.on('workspace/session-release', ({ sessionId }) => {
+        releases.push(sessionId)
+      }),
+    })
 
+    // A resumed removal releases owners the same way a live one does: an agent
+    // this start already resumed cannot pin the log of a Session to delete.
+    expect(releases).toEqual([SessionId('gone')])
     expect(result.remove.mock.calls).toEqual([['gone']])
     expect(result.registry.pendingSessionDeletionIds).toEqual([])
     expect(storedState(result.pool).pendingSessionDeletions).toEqual([])

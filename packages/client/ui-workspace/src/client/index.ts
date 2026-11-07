@@ -413,11 +413,15 @@ export function apply(ctx: Context): void {
 /**
  * The activity a Host `workspace/session-active` refusal reported — from an
  * archive or a delete attempt, which share the refusal — or nothing for any
- * other failure. The class identity check goes by name: client plugin
+ * other failure. The refusal classes are matched by name because client plugin
  * bundles do not share error-class identity.
  */
+const SESSION_REFUSAL_NAMES: ReadonlySet<string> = new Set([
+  'WorkspaceArchiveError', 'WorkspaceDeleteError',
+])
+
 function activeSessionRefusal(reason: unknown): readonly SessionActivity[] | undefined {
-  if (!(reason instanceof Error) || reason.name !== 'WorkspaceArchiveError') return undefined
+  if (!(reason instanceof Error) || !SESSION_REFUSAL_NAMES.has(reason.name)) return undefined
   const { rpcError } = reason as WorkspaceArchiveError
   return rpcError.code === 'workspace/session-active' ? rpcError.details.activity : undefined
 }

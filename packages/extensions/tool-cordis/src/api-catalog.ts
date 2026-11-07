@@ -4745,10 +4745,10 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
       },
       {
         signature: 'deleteSession(sessionId: SessionId, options: DeleteSessionOptions = {}): Promise<void>',
-        description: 'Delete one Session irreversibly: its log goes first, then every trace of it in this registry.\n\nThe Session must exist, and without `stopActivity` it must also be inactive — the `workspace/session-activity` waterfall is asked once, and any reported activity rejects before anything is written. A pending-deletion intent is recorded before the log removal, and that removal is the commit point every read face follows: listings and search are projected from stored logs, so a Session whose log survives an interrupted delete stays visible rather than vanishing with its bytes still on disk. Once the log is gone this registry drops the Session from its workspace record and from the archive and pin sets, forgets its header, and emits `workspace/session-deleted` for the records other packages derive from it. Deletion removes only this Session: the descendants it spawned keep their own self-contained logs.',
+        description: 'Delete one Session irreversibly: its log goes first, then every trace of it in this registry.\n\nThe Session must exist, and without `stopActivity` it must also be inactive — the `workspace/session-activity` waterfall is asked once, and any reported activity rejects before anything is written. A pending-deletion intent is recorded, then `workspace/session-release` asks every in-process owner to drop the Session\'s log — a live Agent is disposed so the write handle it owns closes — and the removal that follows is the commit point every read face observes: listings and search are projected from stored logs, so a Session whose log survives an interrupted delete stays visible rather than vanishing with its bytes still on disk. Once the log is gone this registry drops the Session from its workspace record and from the archive and pin sets, forgets its header, and emits `workspace/session-deleted` for the records other packages derive from it. Deletion removes only this Session: the descendants it spawned keep their own self-contained logs.',
         parameters: [{ name: 'sessionId', description: 'the Session to delete.' }, { name: 'options', description: 'whether running work is stopped instead of refusing.' }],
         returns: 'resolution after the log removal and every accounting write are durable.',
-        throws: ['{WorkspaceUnknownSessionError} when no live Session or stored log names it.', '{WorkspaceActiveSessionError} when work still runs and `stopActivity` is unset.', '{SessionAlreadyOwnedError} when a write handle still owns the log: the intent stays durable, so a later start completes the deletion.'],
+        throws: ['{WorkspaceUnknownSessionError} when no live Session or stored log names it.', '{WorkspaceActiveSessionError} when work still runs and `stopActivity` is unset.', '{SessionAlreadyOwnedError} when another process still owns the log after every in-process owner released it: the intent stays durable, so a later start completes the deletion.'],
       },
       {
         signature: 'pinSession(sessionId: SessionId): Promise<void>',
@@ -5520,6 +5520,14 @@ export const EVENT_API: readonly EventApiEntry[] = [
     summary: 'Announce that one Session log was removed and this registry dropped every trace of it, so each other owner of a derived record about that Session can retire its copy.',
     description: 'Announce that one Session log was removed and this registry dropped every trace of it, so each other owner of a derived record about that Session can retire its copy. The removal is already durable when this dispatches, and the Session is no longer in any workspace, archive, or pin set. Listeners never veto it: a listener failure is logged and the rest still run.',
     parameters: [{ name: 'notice', description: 'the Session whose log no longer exists.' }],
+  },
+  {
+    name: 'workspace/session-release',
+    mode: 'parallel',
+    signature: '\'workspace/session-release\'(request: SessionActivityRequest): Promise<void> | void',
+    summary: 'Release every in-process owner of one Session\'s stored log, asked before that log is removed.',
+    description: 'Release every in-process owner of one Session\'s stored log, asked before that log is removed. The durable pending-deletion intent is already written when this dispatches. Each owner drops what would otherwise keep the log owned by a write handle — for the agent loop, disposing that Session\'s live Agent, which drains it and closes the handle — and awaits its own release, because the removal follows in the same call. Nothing is rolled back for a failing owner: the registry still attempts the removal, and a log that stays owned keeps its intent so a later start completes the deletion.',
+    parameters: [{ name: 'request', description: 'the Session whose log is about to be removed.' }],
   },
   {
     name: 'workspace/session-stop',

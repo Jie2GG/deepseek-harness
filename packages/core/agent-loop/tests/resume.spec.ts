@@ -258,6 +258,43 @@ describe('the session-persistence Agent Note: AgentLoop factory create/resume', 
     await ctx.fiber.dispose()
   })
 
+  it('workspace session release disposes the live Agent and frees its write ownership', async () => {
+    const { ctx } = await persistentHarness(new MockAdapter([textResponse('hi')]))
+    const sessionId = SessionId('release-request')
+    const handle = await ctx.agents.create({ sessionId })
+    // Materialize the log so a released Session still has an artifact to claim.
+    handle.agent.followup(createUserMessage({ content: [{ type: 'text', text: 'q' }], source: { kind: 'user' } }))
+    await waitForIdle(ctx, handle.agent)
+    await expect(ctx.sessionPersistence.open(sessionId, 'write'))
+      .rejects.toThrow(/already owned by an active write handle/)
+
+    // A Workspace Session deletion asks every in-process owner to release the log
+    // and awaits that release: the live Agent is gone, and the removal that
+    // follows can claim the write lease the Agent used to hold.
+    await ctx.parallel('workspace/session-release', { sessionId })
+
+    expect(ctx.agents.get(sessionId)).toBeUndefined()
+    expect(ctx.sessions.get(sessionId)).toBeUndefined()
+    const reopened = await ctx.sessionPersistence.open(sessionId, 'write')
+    expect(reopened.access).toBe('write')
+    await reopened.close()
+    await ctx.fiber.dispose()
+  })
+
+  it('workspace session release for another Session leaves the live Agent owning its log', async () => {
+    const { ctx } = await persistentHarness(new MockAdapter([textResponse('hi')]))
+    const sessionId = SessionId('release-bystander')
+    const handle = await ctx.agents.create({ sessionId })
+
+    await ctx.parallel('workspace/session-release', { sessionId: SessionId('someother') })
+
+    expect(ctx.agents.get(sessionId)).toBeDefined()
+    await expect(ctx.sessionPersistence.open(sessionId, 'write'))
+      .rejects.toThrow(/already owned by an active write handle/)
+    await handle.dispose()
+    await ctx.fiber.dispose()
+  })
+
   it('a stored-session create failure rolls the fresh identity back', async () => {
     const { ctx } = await persistentHarness(new MockAdapter([]))
     const sessionId = SessionId('create-backend-fail')

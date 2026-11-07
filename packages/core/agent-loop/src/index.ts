@@ -29,6 +29,7 @@ import { interruptedTurnClosers, SessionLogOffset, SessionPreparation } from '@d
 import type { Session, SessionHeader, SessionId } from '@deepseek-ai/dsh-session'
 import type {} from '@deepseek-ai/dsh-system-prompt'
 import type {} from '@deepseek-ai/dsh-tools'
+import type {} from '@deepseek-ai/dsh-workspace'
 import type { ProjectionHandle } from '@deepseek-ai/dsh-session-projection'
 import { SessionPersistenceNotFoundError } from '@deepseek-ai/dsh-session-persistence'
 import type { SessionHandle, SessionPersistence } from '@deepseek-ai/dsh-session-persistence'
@@ -55,7 +56,8 @@ class FactoryOwnership {
   private accepting = true
   private readonly teardown = new AbortController()
   private readonly inactive = Promise.withResolvers<void>()
-  private readonly liveAgents = new Set<() => Promise<void>>()
+  /** Each live Agent's shared teardown, keyed by its Session id. */
+  private readonly liveAgents = new Map<SessionId, () => Promise<void>>()
   private startupTasks = new Set<Promise<void>>()
 
   constructor(private readonly fiber: Context['fiber']) {}
@@ -69,10 +71,21 @@ class FactoryOwnership {
     return this.accepting && !INACTIVE_STATES.has(this.fiber.state)
   }
 
-  /** Track one live agent's shared teardown until it has run. */
-  track(dispose: () => Promise<void>): () => void {
-    this.liveAgents.add(dispose)
-    return () => { this.liveAgents.delete(dispose) }
+  /** Track one live Agent's shared teardown under its Session id until it has run. */
+  track(id: SessionId, dispose: () => Promise<void>): () => void {
+    this.liveAgents.set(id, dispose)
+    return () => { this.liveAgents.delete(id) }
+  }
+
+  /**
+   * Run one live Agent's shared teardown, which drains it and closes the write
+   * handle it owns. A repeat call joins the teardown already in flight.
+   * @param id - the Session whose live Agent this process should stop owning.
+   * @returns resolution once that Agent is disposed, or once a repeat call joins
+   *   the teardown already running.
+   */
+  async disposeSession(id: SessionId): Promise<void> {
+    await this.liveAgents.get(id)?.()
   }
 
   /** Join config startup work that begins before an agent exists. */
@@ -97,7 +110,7 @@ class FactoryOwnership {
     this.teardown.abort(new Error('agent loop is not active'))
     this.inactive.resolve()
     const settlements = await Promise.allSettled([
-      ...[...this.liveAgents].map(dispose => dispose()),
+      ...[...this.liveAgents.values()].map(dispose => dispose()),
       ...this.startupTasks,
     ])
     const failures: unknown[] = []
@@ -333,6 +346,12 @@ export class AgentLoop extends Service implements AgentFactory {
     this.modelProjectionHandle = await ctx.sessionProjections.register(modelSelectionProjectionDefinition)
     this.inboxProjectionHandle = await ctx.sessionProjections.register(inboxProjectionDefinition)
     ctx.effect(() => ctx.agents.setFactory(this), 'agentLoop.setFactory()')
+    // A Workspace Session deletion releases this process's ownership of the log:
+    // the live Agent's teardown closes the write handle it owns, and the deletion
+    // awaits this settlement before it claims the write lease.
+    ctx.effect(() => ctx.on('workspace/session-release', ({ sessionId }) =>
+      ownership.disposeSession(sessionId),
+    ), 'agentLoop.sessionRelease()')
     ctx.systemPrompt.variable('provider', context => context.modelSelection?.provider ?? context.agent?.options.provider)
     ctx.systemPrompt.variable('model', context => context.modelSelection?.model ?? context.agent?.options.model)
 
@@ -551,7 +570,7 @@ export class AgentLoop extends Service implements AgentFactory {
         await Promise.all([unfollowOwner(), unfollowScope?.()])
       }
     }
-    const untrack = this.ownership.track(dispose)
+    const untrack = this.ownership.track(id, dispose)
     try {
       assertAgentOptions(agentOptions)
       ownerCtx.fiber.assertActive()

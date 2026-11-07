@@ -30,6 +30,14 @@ A pass removes a queued object only when the ledger has no holder for it, this p
 
 The claim is deliberately process memory rather than a durable table. Reclaim stays scoped to what a deletion releases: an object that no log ever named is not swept, because finding it means enumerating the backend's stored digests, which `ctx.attachments` does not expose today.
 
+### In-process owners release the log before it is removed
+
+`deleteSession` dispatches `workspace/session-release` (parallel) after the intent is written and awaits every owner's release, and only then removes the log. The agent loop answers by disposing that Session's live Agent: the driver drains, and closing the write handle gives up the write ownership the removal must claim.
+
+A live Agent owns its log while it is merely open, so write ownership is a different fact from the activity the `workspace/session-activity` waterfall reports. Without the release, the Session a user is currently viewing is the one Session that can never be deleted: the activity check passes because no turn runs, and the removal then refuses because this same process still holds the handle. The release runs before every removal the registry performs, including the one that carries a leftover intent at startup, where a Session an Agent this start resumed would otherwise pin its own log.
+
+Release waits for settlement where stop does not. Archiving writes no log byte, so a stop may return while the work settles in the background; a removal claims the write lease immediately, so the registry has to know the handle is closed before it asks. A failing owner is logged and the removal is still attempted: an owner that cannot release leaves the removal refused as owned, which keeps the intent visible instead of reporting a success that did not happen.
+
 ### Deletion is announced, not called
 
 The registry emits `workspace/session-deleted` after its durable writes, and each owner of a derived record about that Session retires its copy: the reference ledger detaches its holders, and the projection cache drops its checkpoint row.
@@ -44,10 +52,16 @@ The registry emits `workspace/session-deleted` after its durable writes, and eac
 - **A durable in-flight claim table** — needs its own expiry, must be cleared after a crash by whoever comes next, and can outlive the upload it protects, reintroducing the leak it was avoiding. The age guard bounds the cross-process case, and the re-read at removal time is what makes an in-flight reference safe.
 - **Bumping the `workspace` domain to version 3** — implies a successor generation and a migration for data that never changed shape, against the adjacent-migration rule that a new version is reserved for stored shapes that cannot parse unchanged.
 - **Calling the ledger and the cache from the registry** — inverts the dependency for a notification a declared event already carries, and makes deletion depend on optional plugins being present.
+- **Reporting write ownership as a kind of activity** — every open Session would look busy, the stop-and-delete offer would mean "close the editor", and archiving with `stopActivity` would start disposing Agents it currently leaves running.
+- **Refusing the current Session in the surface and only correcting the wording** — cheap to implement, but deleting the conversation one is reading is the commonest deletion there is.
+- **Closing the handle inside `sessionPersistence.delete`** — the storage layer does not own the Agent, and releasing it needs the loop's whole teardown order: quiesce the driver, retire the session, unwind the scope, then close the handle.
+- **Deleting the log while the live Agent keeps running** — its next write recreates an artifact for a Session no listing should show, so the Session returns after every deletion.
 
 ## Consequences
 
-A delete either removes the log or says why it did not: there is no state where a Session is hidden while its bytes survive, and no repair step for a crash between the two writes. The price is that a Session blocked by a live writer stays visible with a pending intent until that handle closes, so the surface retries rather than receiving a silent success.
+A delete either removes the log or says why it did not: there is no state where a Session is hidden while its bytes survive, and no repair step for a crash between the two writes. A Session this process owns is deletable because the delete ends that ownership; only another process holding the log leaves the intent pending and the Session visible until a later start completes it.
+
+Deleting the Session a user is viewing ends its live Agent, and the delete waits for that Agent to drain. That is the same cost the user's own stop pays, and it is what makes the removal safe: the driver commits its closing events through the handle before the handle gives up the log.
 
 Attachments are reclaimed only after a complete rebuild, so a fresh install holds every object until its first successful pass, and a storage fault delays reclamation rather than risking loss. A shared object survives every single-Session deletion by construction: the holder set, not the deleting caller, decides.
 

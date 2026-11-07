@@ -332,8 +332,8 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
   },
   {
     key: 'uiWorkspace',
-    summary: 'Workspace archive and directory operations consumed by Client UI domains.',
-    description: 'Workspace archive and directory operations consumed by Client UI domains.',
+    summary: 'Workspace archive, delete, and directory operations consumed by Client UI domains.',
+    description: 'Workspace archive, delete, and directory operations consumed by Client UI domains.',
     methods: [
       {
         signature: 'openSession(target: SessionTarget): void',
@@ -365,7 +365,7 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         parameters: [{ name: 'workspaceId', description: 'explicit target; absent inherits the current or most recent Workspace.' }, { name: 'options', description: 'initial content, the blank\'s preset, and `whenDraftExists`, which decides whether existing text or attachments are kept, replaced, or followed by the prompt.' }],
       },
       {
-        signature: 'archiveSession(sessionId: SessionId, options?: { readonly stopActivity?: boolean }): Promise<void>',
+        signature: 'archiveSession(sessionId: SessionId, options?: StopActivityChoice): Promise<void>',
         description: 'Archive a Session and clear it when it is the current selection.',
         parameters: [{ name: 'sessionId', description: 'Session to archive.' }, { name: 'options', description: '`stopActivity` asks the Host to stop the Session\'s running work instead of refusing.' }],
       },
@@ -1034,6 +1034,10 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   {
     name: 'StartSessionOptions',
     declaration: 'export interface StartSessionOptions extends DraftInitializationOptions {\n    readonly agentPreset?: string;\n}',
+  },
+  {
+    name: 'StopActivityChoice',
+    declaration: 'export interface StopActivityChoice {\n    readonly stopActivity?: boolean;\n}',
   },
   {
     name: 'StoreDecl',

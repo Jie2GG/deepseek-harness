@@ -577,8 +577,10 @@ unarchiveSession(sessionId: SessionId): Promise<void>
  * The Session must exist, and without `stopActivity` it must also be
  * inactive — the `workspace/session-activity` waterfall is asked once, and any
  * reported activity rejects before anything is written. A pending-deletion
- * intent is recorded before the log removal, and that removal is the commit
- * point every read face follows: listings and search are projected from stored
+ * intent is recorded, then `workspace/session-release` asks every in-process
+ * owner to drop the Session's log — a live Agent is disposed so the write handle
+ * it owns closes — and the removal that follows is the commit point every read
+ * face observes: listings and search are projected from stored
  * logs, so a Session whose log survives an interrupted delete stays visible
  * rather than vanishing with its bytes still on disk. Once the log is gone this
  * registry drops the Session from its workspace record and from the archive and
@@ -590,8 +592,9 @@ unarchiveSession(sessionId: SessionId): Promise<void>
  * @returns resolution after the log removal and every accounting write are durable.
  * @throws {WorkspaceUnknownSessionError} when no live Session or stored log names it.
  * @throws {WorkspaceActiveSessionError} when work still runs and `stopActivity` is unset.
- * @throws {SessionAlreadyOwnedError} when a write handle still owns the log: the
- *   intent stays durable, so a later start completes the deletion.
+ * @throws {SessionAlreadyOwnedError} when another process still owns the log after
+ *   every in-process owner released it: the intent stays durable, so a later
+ *   start completes the deletion.
  */
 deleteSession(sessionId: SessionId, options: DeleteSessionOptions = {}): Promise<void>
 
@@ -671,6 +674,31 @@ Announce that one Session log was removed and this registry dropped every trace 
  * @mode emit
  */
 'workspace/session-deleted'(notice: SessionDeletedNotice): void
+```
+
+Source: [`packages/workspace/workspace/src/index.ts`](../../packages/workspace/workspace/src/index.ts)
+
+<a id="workspacesession-release--parallel"></a>
+
+#### `workspace/session-release` — parallel
+
+Release every in-process owner of one Session's stored log, asked before that log is removed. The durable pending-deletion intent is already written when this dispatches. Each owner drops what would otherwise keep the log owned by a write handle — for the agent loop, disposing that Session's live Agent, which drains it and closes the handle — and awaits its own release, because the removal follows in the same call. Nothing is rolled back for a failing owner: the registry still attempts the removal, and a log that stays owned keeps its intent so a later start completes the deletion.
+
+```ts cordis-catalog
+/**
+ * Release every in-process owner of one Session's stored log, asked before
+ * that log is removed. The durable pending-deletion intent is already
+ * written when this dispatches. Each owner drops what would otherwise keep
+ * the log owned by a write handle — for the agent loop, disposing that
+ * Session's live Agent, which drains it and closes the handle — and awaits
+ * its own release, because the removal follows in the same call. Nothing is
+ * rolled back for a failing owner: the registry still attempts the removal,
+ * and a log that stays owned keeps its intent so a later start completes the
+ * deletion.
+ * @param request - the Session whose log is about to be removed.
+ * @mode parallel
+ */
+'workspace/session-release'(request: SessionActivityRequest): Promise<void> | void
 ```
 
 Source: [`packages/workspace/workspace/src/index.ts`](../../packages/workspace/workspace/src/index.ts)

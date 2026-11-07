@@ -36,12 +36,12 @@ export interface StartSessionOptions extends DraftInitializationOptions {
   readonly agentPreset?: string
 }
 
-/** Workspace archive and directory operations consumed by Client UI domains. */
 /** Ask the Host to stop one Session's running work instead of refusing the action. */
 export interface StopActivityChoice {
   readonly stopActivity?: boolean
 }
 
+/** Workspace archive, delete, and directory operations consumed by Client UI domains. */
 export interface UiWorkspace {
   /**
    * Select a Session and show its Conversation as one UI navigation action.

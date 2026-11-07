@@ -114,10 +114,11 @@ export interface ArchiveSessionOptions {
 export interface DeleteSessionOptions {
   /**
    * Ask the composed providers to stop the Session running work instead of
-   * refusing the deletion because of it. The intent and the log removal happen
-   * first, then the stops are requested: a provider failure is logged without
-   * undoing the deletion, and a write handle that outlives the stop keeps the
-   * durable intent so a later start finishes the removal.
+   * refusing the deletion because of it. The intent, the release of every
+   * in-process owner, and the log removal happen first, then the stops are
+   * requested: a provider failure is logged without undoing the deletion, and a
+   * log another process still owns keeps the durable intent so a later start
+   * finishes the removal.
    */
   readonly stopActivity?: boolean
 }
@@ -162,6 +163,20 @@ declare module '@deepseek-ai/cordis' {
      * @mode parallel
      */
     'workspace/session-stop'(request: SessionActivityRequest): Promise<void> | void
+    /**
+     * Release every in-process owner of one Session's stored log, asked before
+     * that log is removed. The durable pending-deletion intent is already
+     * written when this dispatches. Each owner drops what would otherwise keep
+     * the log owned by a write handle — for the agent loop, disposing that
+     * Session's live Agent, which drains it and closes the handle — and awaits
+     * its own release, because the removal follows in the same call. Nothing is
+     * rolled back for a failing owner: the registry still attempts the removal,
+     * and a log that stays owned keeps its intent so a later start completes the
+     * deletion.
+     * @param request - the Session whose log is about to be removed.
+     * @mode parallel
+     */
+    'workspace/session-release'(request: SessionActivityRequest): Promise<void> | void
     /**
      * Announce that one Session log was removed and this registry dropped every
      * trace of it, so each other owner of a derived record about that Session can
@@ -436,8 +451,10 @@ export class WorkspaceRegistry extends Service {
    * The Session must exist, and without `stopActivity` it must also be
    * inactive — the `workspace/session-activity` waterfall is asked once, and any
    * reported activity rejects before anything is written. A pending-deletion
-   * intent is recorded before the log removal, and that removal is the commit
-   * point every read face follows: listings and search are projected from stored
+   * intent is recorded, then `workspace/session-release` asks every in-process
+   * owner to drop the Session's log — a live Agent is disposed so the write handle
+   * it owns closes — and the removal that follows is the commit point every read
+   * face observes: listings and search are projected from stored
    * logs, so a Session whose log survives an interrupted delete stays visible
    * rather than vanishing with its bytes still on disk. Once the log is gone this
    * registry drops the Session from its workspace record and from the archive and
@@ -449,8 +466,9 @@ export class WorkspaceRegistry extends Service {
    * @returns resolution after the log removal and every accounting write are durable.
    * @throws {WorkspaceUnknownSessionError} when no live Session or stored log names it.
    * @throws {WorkspaceActiveSessionError} when work still runs and `stopActivity` is unset.
-   * @throws {SessionAlreadyOwnedError} when a write handle still owns the log: the
-   *   intent stays durable, so a later start completes the deletion.
+   * @throws {SessionAlreadyOwnedError} when another process still owns the log after
+   *   every in-process owner released it: the intent stays durable, so a later
+   *   start completes the deletion.
    */
   deleteSession(sessionId: SessionId, options: DeleteSessionOptions = {}): Promise<void> {
     return this.enqueueOperation(async () => {
@@ -462,8 +480,11 @@ export class WorkspaceRegistry extends Service {
           pendingSessionDeletions: [...this.pendingDeletions(), sessionId],
         })
       }
-      // The commit point. A refusal here keeps every accounting record in place
-      // and leaves the durable intent for the next start.
+      // The commit point follows the release, so a Session the user is still
+      // viewing is deletable: the process that owns its log stops owning it before
+      // the removal claims the write lease. A refusal here keeps every accounting
+      // record in place and leaves the durable intent for the next start.
+      await this.releaseSessionOwnership(sessionId)
       await this.ctx.sessionPersistence.delete(sessionId)
       await this.finishSessionDeletion(sessionId)
       if (options.stopActivity === true) await this.stopSessionActivity(sessionId)
@@ -569,6 +590,26 @@ export class WorkspaceRegistry extends Service {
     if (this.headers.has(id)) return true
     await this.indexHeaders(await this.listStoredHeaders())
     return this.headers.has(id)
+  }
+
+  /**
+   * Ask every in-process owner to release one Session's stored log, and wait for
+   * each release to settle so the removal can claim the write lease. A failing
+   * owner is logged: the removal is still attempted, and a log that stays owned
+   * keeps its durable intent.
+   * @param sessionId - the Session whose log is about to be removed.
+   */
+  private async releaseSessionOwnership(sessionId: SessionId): Promise<void> {
+    try {
+      await this.ctx.parallel('workspace/session-release', { sessionId })
+    } catch (error: unknown) {
+      // ctx.parallel settles every listener and rejects with one AggregateError.
+      /* v8 ignore next -- the plain arm guards a rethrowing dispatcher. */
+      const failures = error instanceof AggregateError ? error.errors : [error]
+      for (const failure of failures) {
+        this.ctx.logger.warn(`workspace: releasing session '${sessionId}' for deletion failed: ${String(failure)}`)
+      }
+    }
   }
 
   /** Request every provider's stop; a failing provider is logged, never a reason to keep the session visible. */
@@ -921,6 +962,7 @@ export class WorkspaceRegistry extends Service {
   private async resumePendingDeletions(): Promise<void> {
     for (const sessionId of [...this.pendingDeletions()]) {
       try {
+        await this.releaseSessionOwnership(sessionId)
         await this.ctx.sessionPersistence.delete(sessionId)
         await this.finishSessionDeletion(sessionId)
       } catch (error: unknown) {

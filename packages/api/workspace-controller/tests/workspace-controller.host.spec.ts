@@ -347,6 +347,24 @@ describe('WorkspaceController commands', () => {
     stopListening()
   })
 
+  it('releases in-process owners before the Remote delete removes the log', async () => {
+    const { controller, ctx, root, remove } = await harness()
+    const created = await controller.create({ path: stageDir(root, 'release') })
+    const session = ctx.sessions.create(SessionId('release-me'), { meta: { cwd: created.workspace.path } })
+    const order: string[] = []
+    const stopRelease = ctx.on('workspace/session-release', ({ sessionId }) => {
+      order.push(`release:${sessionId}`, `unremoved:${remove.mock.calls.length === 0}`)
+    })
+
+    await expect(controller.deleteSession({ sessionId: session.id }))
+      .resolves.toEqual({ archivedSessionIds: [] })
+
+    // The release is part of the Remote delete, and it settles first: an owner
+    // such as a live Agent closes its write handle before the removal claims it.
+    expect(order).toEqual(['release:release-me', 'unremoved:true'])
+    stopRelease()
+  })
+
   it('maps a held write handle to a stable failure and leaves the deletion pending', async () => {
     const { controller, ctx, root } = await harness({
       deleteFailure: new SessionAlreadyOwnedError(SessionId('held')),
