@@ -9,6 +9,7 @@ import { SESSION_FORMAT_VERSION, SessionLogOffset, SessionSeq, SessionId } from 
 import type { SessionEvent, SessionHeader } from '@deepseek-ai/dsh-session'
 import type { SessionPersistence } from '@deepseek-ai/dsh-session-persistence'
 import * as JsonlSessionPersistence from '@deepseek-ai/dsh-session-persistence-jsonl'
+import { LEASE_FILENAME } from '../src/lease.ts'
 import {
   assertNoRetiredHeaderFields, encodeSegment, eventLines, generationLogFilename, generationLogPath,
   logPath, parseGenerationLogFilename, projectDir, projectKey, scanLog, sessionDir, SessionLogScanner,
@@ -58,6 +59,12 @@ const readTally = vi.hoisted(() => ({
 }))
 
 const readFailure = vi.hoisted(() => ({
+  path: undefined as string | undefined,
+  error: undefined as Error | undefined,
+}))
+
+/** Registered removal failure: one exact path fails, everything else proceeds. */
+const rmFailure = vi.hoisted(() => ({
   path: undefined as string | undefined,
   error: undefined as Error | undefined,
 }))
@@ -119,6 +126,10 @@ vi.mock('node:fs/promises', async (importOriginal) => {
         finished?.()
       }
     }) as typeof actual.readFile,
+    rm: async (...args: Parameters<typeof actual.rm>) => {
+      if (String(args[0]) === rmFailure.path && rmFailure.error !== undefined) throw rmFailure.error
+      return actual.rm(...args)
+    },
     readdir: (async (...args: Parameters<typeof actual.readdir>) => {
       if (listingProbe.active) return probeListingRead(String(args[0]), () => actual.readdir(...args))
       if (String(args[0]) === readdirFailure.path && readdirFailure.error !== undefined) {
@@ -2660,6 +2671,53 @@ describe('JsonlSessionPersistence: edge cases', () => {
 
     await expect(ctx.sessionPersistence.open(m.id, 'read')).rejects.toThrow(/unsupported flat-file layout/)
     await expect(ctx.sessionPersistence.list()).rejects.toThrow(/unsupported flat-file layout/)
+  })
+
+  it('delete clears the session directory, its stale generations, and its lock file', async () => {
+    const m = meta('delete-directory', '/project')
+    await writeLog(ctx.sessionPersistence, m, oneTurnLog())
+    const dir = sessionDir(root, m.cwd, m.id)
+    await writeFile(join(dir, generationLogFilename(1, 'none')), 'stale generation\n')
+    await writeFile(join(dir, LEASE_FILENAME), '')
+
+    expect(await ctx.sessionPersistence.delete(m.id)).toBe(true)
+    await expect(readdir(dir)).rejects.toThrow()
+    expect(await ctx.sessionPersistence.stat(m.id)).toBeUndefined()
+    expect(await ctx.sessionPersistence.list()).toEqual([])
+  })
+
+  it('delete reports absence for an unknown id without publishing any directory', async () => {
+    const before = await readdir(root)
+    expect(await ctx.sessionPersistence.delete(SessionId('never-stored'))).toBe(false)
+    expect(await readdir(root)).toEqual(before)
+  })
+
+  it('delete surfaces a removal failure unchanged and keeps the artifact for a retry', async () => {
+    const m = meta('busy-artifact', '/project')
+    await writeLog(ctx.sessionPersistence, m, oneTurnLog())
+    const dir = sessionDir(root, m.cwd, m.id)
+    rmFailure.path = dir
+    rmFailure.error = Object.assign(new Error('resource busy'), { code: 'EBUSY' })
+    try {
+      await expect(ctx.sessionPersistence.delete(m.id)).rejects.toThrow(/resource busy/)
+    } finally {
+      rmFailure.path = undefined
+      rmFailure.error = undefined
+    }
+    expect((await stat(dir)).isDirectory()).toBe(true)
+    expect((await ctx.sessionPersistence.list()).map(s => s.header.id)).toEqual([m.id])
+    expect(await ctx.sessionPersistence.delete(m.id)).toBe(true)
+  })
+
+  it('delete refuses the obsolete flat-file layout instead of sweeping the project', async () => {
+    const m = meta('legacy-flat-delete', '/legacy')
+    const project = projectDir(root, m.cwd)
+    const flat = join(project, `${encodeSegment(m.id)}.jsonl`)
+    await mkdir(project, { recursive: true })
+    await writeFile(flat, 'flat')
+
+    await expect(ctx.sessionPersistence.delete(m.id)).rejects.toThrow(/unsupported flat-file layout/)
+    expect((await stat(flat)).isFile()).toBe(true)
   })
 
   it('rejects a compressed obsolete flat-file artifact during targeted lookup', async () => {

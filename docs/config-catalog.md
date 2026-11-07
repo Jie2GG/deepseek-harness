@@ -111,7 +111,7 @@ export interface Config {
 
 - `inject`: `agents` · `sessions` · `llm` · `tools` · `systemPrompt` · `sessionProjections`
 - `refs`: [`AgentOptions`](subsystems/core.md) · [`SessionId`](subsystems/core.md) · `Volatile` (`@deepseek-ai/cosmokit`)
-- `source`: [`packages/core/agent-loop/src/index.ts:252`](../packages/core/agent-loop/src/index.ts)
+- `source`: [`packages/core/agent-loop/src/index.ts:265`](../packages/core/agent-loop/src/index.ts)
 
 ```ts config-catalog
 /** Agent-loop plugin configuration. */
@@ -343,7 +343,7 @@ export interface Config {
 ## `@deepseek-ai/dsh-api-workspace-controller`
 
 - `inject`: `remoteAccess` · `typert` · `workspaceRegistry`
-- `source`: [`packages/api/workspace-controller/src/index.ts:37`](../packages/api/workspace-controller/src/index.ts)
+- `source`: [`packages/api/workspace-controller/src/index.ts:38`](../packages/api/workspace-controller/src/index.ts)
 
 ```ts config-catalog
 /** First-use directory policy for the Host account. */
@@ -390,7 +390,7 @@ export interface Config {
 
 ## `@deepseek-ai/dsh-attachment-local`
 
-- `source`: [`packages/attachment/attachment-local/src/index.ts:65`](../packages/attachment/attachment-local/src/index.ts)
+- `source`: [`packages/attachment/attachment-local/src/index.ts:71`](../packages/attachment/attachment-local/src/index.ts)
 
 ```ts config-catalog
 /** Local attachment backend configuration. */
@@ -421,6 +421,33 @@ export interface Config {
 }
 ```
 <!-- END GENERATED config-catalog:@deepseek-ai/dsh-attachment-local -->
+
+<!-- BEGIN GENERATED config-catalog:@deepseek-ai/dsh-attachment-reclaim -->
+<a id="deepseek-aidsh-attachment-reclaim"></a>
+
+## `@deepseek-ai/dsh-attachment-reclaim`
+
+- `inject`: `storageDomain` · `sessionPersistence` · `attachments`
+- `source`: [`packages/attachment/attachment-reclaim/src/index.ts:60`](../packages/attachment/attachment-reclaim/src/index.ts)
+
+```ts config-catalog
+/**
+ * Plugin config. Each field trades how eagerly disk is reclaimed against how
+ * much is kept, so the composition states them in `cordis.yml`; the rules that
+ * decide whether one object may go are policy, not tunables.
+ */
+export interface Config {
+  /** Interval between reclaim passes. */
+  reclaimIntervalMs: number
+  /** Shortest age an object reaches before a pass may remove it, and the lifetime of one in-process claim. */
+  minAgeMs: number
+  /** Most queued objects one reclaim pass handles. */
+  batchSize: number
+  /** Most attachment-store calls one reclaim pass keeps in flight. */
+  concurrency: number
+}
+```
+<!-- END GENERATED config-catalog:@deepseek-ai/dsh-attachment-reclaim -->
 
 <!-- BEGIN GENERATED config-catalog:@deepseek-ai/dsh-bash-local -->
 <a id="deepseek-aidsh-bash-local"></a>
@@ -3113,7 +3140,7 @@ export type SessionLogCompressionLevel = 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9
 
 ## `@deepseek-ai/dsh-session-persistence-jsonl`
 
-- `source`: [`packages/session/session-persistence-jsonl/src/index.ts:94`](../packages/session/session-persistence-jsonl/src/index.ts)
+- `source`: [`packages/session/session-persistence-jsonl/src/index.ts:95`](../packages/session/session-persistence-jsonl/src/index.ts)
 
 ```ts config-catalog
 /** Plugin config for the JSONL backend's root, physical encoding, and listing concurrency. */
@@ -3147,7 +3174,7 @@ export type JsonlCompression = 'zstd' | 'none'
 ## `@deepseek-ai/dsh-session-projection-cache`
 
 - `inject`: `storageDomain` · `sessionProjections` · `sessions`
-- `source`: [`packages/session/session-projection-cache/src/index.ts:76`](../packages/session/session-projection-cache/src/index.ts)
+- `source`: [`packages/session/session-projection-cache/src/index.ts:77`](../packages/session/session-projection-cache/src/index.ts)
 
 ```ts config-catalog
 /**

@@ -91,6 +91,19 @@ export function registerToasts(
       }),
     }, ArchiveToastEntry)
     yield ctx.slots.register({
+      name: 'workspace.toast', key: 'deleted', locale: 'workspace',
+      inject: (): ToastDisplayInjected<'deleted'> => ({
+        display: (_notice, t) => ({ text: t('toast.deleted'), tone: 'success', holdMs: 6000 }),
+      }),
+    }, ToastEntry<PropsRuntime<'workspace.toast', 'deleted'>>)
+    yield ctx.slots.register({
+      name: 'workspace.toast', key: 'stoppedAndDeleted', locale: 'workspace',
+      inject: (): ToastDisplayInjected<'stoppedAndDeleted'> => ({
+        display: (_notice, t) => ({ text: t('toast.stoppedAndDeleted'), tone: 'success', holdMs: 6000 }),
+      }),
+    }, ToastEntry<PropsRuntime<'workspace.toast', 'stoppedAndDeleted'>>)
+
+    yield ctx.slots.register({
       name: 'workspace.toast', key: 'stoppedAndArchived', locale: 'workspace', store: viewStore,
       inject: (): ArchiveToastInjected => ({
         display: (notice, t, dismiss) => ({

@@ -36,7 +36,12 @@ export interface StartSessionOptions extends DraftInitializationOptions {
   readonly agentPreset?: string
 }
 
-/** Workspace archive and directory operations consumed by Client UI domains. */
+/** Ask the Host to stop one Session's running work instead of refusing the action. */
+export interface StopActivityChoice {
+  readonly stopActivity?: boolean
+}
+
+/** Workspace archive, delete, and directory operations consumed by Client UI domains. */
 export interface UiWorkspace {
   /**
    * Select a Session and show its Conversation as one UI navigation action.
@@ -94,7 +99,14 @@ export interface UiWorkspace {
    * @param sessionId - Session to archive.
    * @param options - `stopActivity` asks the Host to stop the Session's running work instead of refusing.
    */
-  archiveSession(sessionId: SessionId, options?: { readonly stopActivity?: boolean }): Promise<void>
+  archiveSession(sessionId: SessionId, options?: StopActivityChoice): Promise<void>
+  /**
+   * Remove a Session and its log. A Session the current view was showing moves
+   * the view to the New Session state; nothing else on screen changes.
+   * @param sessionId - the Session to remove.
+   * @param options - pass `stopActivity` to have the Host stop the work first.
+   */
+  deleteSession(sessionId: SessionId, options?: StopActivityChoice): Promise<void>
   /**
    * Unarchive a Session, restoring it to its recorded Workspace position.
    * @param sessionId - Session to unarchive.
@@ -381,6 +393,16 @@ class UiWorkspaceService extends Service implements UiWorkspace {
 
   async archiveSession(sessionId: SessionId, options: { readonly stopActivity?: boolean } = {}): Promise<void> {
     await this.workspaces.archiveSession(sessionId, options)
+    if (this.mainReference?.sessionId === sessionId) this.clearMain()
+  }
+
+  /**
+   * Delete a Session and its log, then clear it when it is the current
+   * selection: the surface cannot keep showing a transcript that no longer
+   * exists.
+   */
+  async deleteSession(sessionId: SessionId, options: { readonly stopActivity?: boolean } = {}): Promise<void> {
+    await this.workspaces.deleteSession(sessionId, options)
     if (this.mainReference?.sessionId === sessionId) this.clearMain()
   }
 

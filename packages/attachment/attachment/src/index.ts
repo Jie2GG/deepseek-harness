@@ -4,6 +4,7 @@ import { Buffer } from 'node:buffer'
 import { Context, Service } from '@deepseek-ai/cordis'
 import { admitEncodedFile as admitFileInput, admitEncodedImages } from './admission.ts'
 import { AttachmentError, isAttachmentError as matchesAttachmentError } from './error.ts'
+import type { AttachmentId } from './brand.ts'
 import type {
   AdmittedPromptContentPart,
   AttachmentAdmissionPart,
@@ -49,6 +50,38 @@ declare module '@deepseek-ai/cordis' {
   interface Context {
     attachments: AttachmentStore
   }
+
+  interface Events {
+    /**
+     * Emitted after one content-addressed object durably committed, before any
+     * caller can reference it. A consumer that tracks which Sessions reference
+     * an object treats the identifier as claimed from here until it sees a
+     * committed reference, so a sweep cannot remove an object between its
+     * commit and the Session event that names it.
+     * @param id - durable identifier of the object this backend just committed.
+     * @mode emit
+     */
+    'attachments/saved'(id: AttachmentId): void
+  }
+}
+
+/** Outcome of one {@link AttachmentStore.discard} call. */
+export type AttachmentDiscardResult =
+  /** The backend removed at least one object stored under the identifier. */
+  | 'removed'
+  /** The backend holds no object under the identifier. */
+  | 'absent'
+  /** The backend holds an object younger than the caller minimum age and kept it. */
+  | 'held'
+
+/** Caller choices for {@link AttachmentStore.discard}. */
+export interface AttachmentDiscardOptions {
+  /**
+   * Minimum age in milliseconds an object must reach before the backend may
+   * remove it. A young object is reported as `held` so a reference committed
+   * shortly after the object was saved still resolves.
+   */
+  readonly minAgeMs?: number
 }
 
 /** Whether one admission part still carries encoded image bytes. */
@@ -203,6 +236,26 @@ export abstract class AttachmentStore extends Service {
   imageHostPath(ref: ImageAttachmentRef): string | undefined {
     void ref
     return undefined
+  }
+
+  /**
+   * Remove one stored object and every display alias of it.
+   *
+   * Content-addressed objects are shared across Sessions, so a backend removes
+   * exactly the identifier it is handed and tracks no reference itself: the
+   * caller proves no Session still references the object. Removal is
+   * irreversible, and an object another caller already removed is not an error.
+   * A backend without removable objects keeps the default `absent`, which
+   * empties the caller queue without ever reclaiming space.
+   * @param id - content-addressed identifier of the object to remove.
+   * @param options - minimum object age.
+   * @returns the removal outcome.
+   * @throws an `AttachmentError` when the identifier is not a valid reference.
+   */
+  discard(id: AttachmentId, options?: AttachmentDiscardOptions): Promise<AttachmentDiscardResult> {
+    void id
+    void options
+    return Promise.resolve('absent')
   }
 
   /**

@@ -4,11 +4,12 @@ import type { RemoteEndpoint } from '@deepseek-ai/dsh-api-remote-access/client'
 import type { ShortcutCommandId } from '@deepseek-ai/dsh-client-shortcuts/client'
 import type { MenuContribution, ContextMenuTargetMap } from '@deepseek-ai/dsh-client-ui-context-menu/client'
 import type {
-  ArchiveSessionInjected, ForkSessionInjected, PinSessionInjected, RenameSessionInjected, SessionIdInjected,
+  ArchiveSessionInjected, DeleteSessionInjected, ForkSessionInjected, PinSessionInjected,
+  RenameSessionInjected, SessionIdInjected,
 } from '../contract/slots.ts'
 
 type Actions = Omit<PinSessionInjected & ArchiveSessionInjected, 'hooks'>
-  & ForkSessionInjected & RenameSessionInjected & SessionIdInjected
+  & DeleteSessionInjected & ForkSessionInjected & RenameSessionInjected & SessionIdInjected
 
 /**
  * Register built-in actions while retaining the legacy Slot for external components.
@@ -66,4 +67,12 @@ export function registerSessionMenus(ctx: Context, actions: Actions): void {
       run: () => { (restoring ? actions.unarchiveSession : actions.archiveSession)(target.sessionId) },
     }]
   })
+  register('delete', 700, ['workspace/deleteSession'], target => (
+    allowed(target, 'workspace/deleteSession')
+      ? [{
+        id: 'delete', label: t('menu.deleteSession'), icon: { key: 'workspace.delete' },
+        run: () => { actions.requestSessionDelete(target.sessionId) },
+      }]
+      : []
+  ))
 }

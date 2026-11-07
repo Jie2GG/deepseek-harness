@@ -1,0 +1,34 @@
+# Bilingual-pair consistency record for 2026-11-06-session-delete-commit-point-and-committed-attachment-reclaim.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write .agents/notes/implemented/architecture/2026-11-06-session-delete-commit-point-and-committed-attachment-reclaim.md
+/agent-note-delete-a-session-log-as-the-commit-point-and-reclaim-attachments-only-from-committed-references:
+  en: 06562f613d00c6f6
+  zh: ee566fad2cbc2f8a
+/agent-note-delete-a-session-log-as-the-commit-point-and-reclaim-attachments-only-from-committed-references/problem:
+  en: f2f507028b2a127f
+  zh: 42d6d2e97f14594b
+/agent-note-delete-a-session-log-as-the-commit-point-and-reclaim-attachments-only-from-committed-references/decision:
+  en: a15c7c13f167e5ac
+  zh: ff261e3705c47ff0
+/agent-note-delete-a-session-log-as-the-commit-point-and-reclaim-attachments-only-from-committed-references/decision/the-log-removal-is-the-commit-point-with-a-durable-intent-beside-it:
+  en: 74b4c8ce66dc9509
+  zh: eafd5f11c1be24e0
+/agent-note-delete-a-session-log-as-the-commit-point-and-reclaim-attachments-only-from-committed-references/decision/a-reference-exists-when-its-event-commits:
+  en: ce3da8e8589c8860
+  zh: 3462ad1c10100069
+/agent-note-delete-a-session-log-as-the-commit-point-and-reclaim-attachments-only-from-committed-references/decision/three-guards-all-required-none-sufficient-alone:
+  en: 5aba781c2a301638
+  zh: d786c29de7d68a45
+/agent-note-delete-a-session-log-as-the-commit-point-and-reclaim-attachments-only-from-committed-references/decision/in-process-owners-release-the-log-before-it-is-removed:
+  en: dc178e92b070188d
+  zh: 5844b31e48ea54cc
+/agent-note-delete-a-session-log-as-the-commit-point-and-reclaim-attachments-only-from-committed-references/decision/deletion-is-announced-not-called:
+  en: 7dbf5c20f4aaa76e
+  zh: eb59de039a8cd4b2
+/agent-note-delete-a-session-log-as-the-commit-point-and-reclaim-attachments-only-from-committed-references/alternatives-considered:
+  en: c38d52da0f31be7a
+  zh: f1f60b7f69344467
+/agent-note-delete-a-session-log-as-the-commit-point-and-reclaim-attachments-only-from-committed-references/consequences:
+  en: 84add4cb123ade84
+  zh: 87d83fadc3b2ea21

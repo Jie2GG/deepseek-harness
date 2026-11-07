@@ -49,7 +49,16 @@ function ensureReference(ref: ImageAttachmentRef): string {
  * @returns provider-local path without reading the object.
  */
 export function normalizedImagePath(root: string, ref: ImageAttachmentRef): string {
-  const sha256 = ensureReference(ref)
+  return imageObjectPath(root, ensureReference(ref))
+}
+
+/**
+ * Derive the absolute normalized-image object path for one digest.
+ * @param root - absolute `DSH_HOME/attachments/v1` root.
+ * @param sha256 - lowercase 64-hex digest naming the object.
+ * @returns provider-local path without reading the object.
+ */
+export function imageObjectPath(root: string, sha256: string): string {
   return join(root, 'objects', sha256.slice(0, 2), sha256)
 }
 

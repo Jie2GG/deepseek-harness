@@ -59,8 +59,8 @@ it('keeps account model-listing diagnostics on stderr during API-key session cre
     }) + '\n', { mode: 0o600 })
     const configPath = join(cwd, 'catalog.patch.yml')
     await writeFile(configPath, JSON.stringify([
-      { id: 'deepseek-account', config: { platformOrigin: origin, inferenceOrigin: origin, allowLoopbackHttp: true } },
-      { id: 'llm-deepseek-account', config: { baseURL: `${origin}/anthropic` } },
+      { id: 'deepseek-account', disabled: false, config: { platformOrigin: origin, inferenceOrigin: origin, allowLoopbackHttp: true } },
+      { id: 'llm-deepseek-account', disabled: false, config: { baseURL: `${origin}/anthropic` } },
       { id: 'llm-deepseek', config: { baseURL: `${origin}/anthropic`, models: [{ id: 'fixture-api-key-model' }] } },
       // Catalog discovery requires the account service to have loaded the stored grant.
       {

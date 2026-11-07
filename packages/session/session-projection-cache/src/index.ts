@@ -33,6 +33,7 @@ import type {
   SessionProjectionMap,
 } from '@deepseek-ai/dsh-session-projection'
 import type { KvTable } from '@deepseek-ai/dsh-storage-domain'
+import type { SessionDeletedNotice } from '@deepseek-ai/dsh-workspace'
 import { projectionCacheDomainSpec } from './spec.ts'
 import type { CheckpointIdentity, CheckpointRecord } from './spec.ts'
 
@@ -212,6 +213,19 @@ export class SessionProjectionCache extends Service {
   }
 
   /**
+   * Drop one Session's stored checkpoint, as when its log is removed.
+   *
+   * The record is derived data: a Session still resident in this process can
+   * write a fresh row from its own log, while removing the row of a Session
+   * whose log is gone leaves nothing behind. An absent record is not an error.
+   * @param id - the Session whose checkpoint record is dropped.
+   * @returns `true` when this call removed a record.
+   */
+  discard(id: SessionId): Promise<boolean> {
+    return Promise.resolve(this.requireTable().delete(id))
+  }
+
+  /**
    * Hydrate projection cells for an already-prepared Session without another
    * persistence read. The cache seeds matching rows; the supplied exact log
    * advances every unit to the observation cut. No checkpoint is written
@@ -337,6 +351,17 @@ export class SessionProjectionCache extends Service {
     // on the cold list. The creation write captures the seed-derived cut.
     this.ctx.on('session/created', (session: Session) => {
       void this.flushSoft(session, 'create')
+    })
+
+    // A deleted Session log has nothing left to checkpoint: retire its row so the
+    // medium keeps no record that no header can witness any more.
+    this.ctx.on('workspace/session-deleted', (notice: SessionDeletedNotice) => {
+      void this.discard(notice.sessionId).catch((error: unknown) => {
+        this.ctx.logger.warn(
+          `session-projection-cache: discarding the record of ${String(notice.sessionId)} `
+          + `failed: ${String(error)}`,
+        )
+      })
     })
 
     // Detach (the live-to-cold moment): the final mandatory point. After

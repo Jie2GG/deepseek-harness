@@ -288,6 +288,17 @@ cachedSnapshot( meta: SessionHeader, keys?: ProjectionKeySelection, ): Projectio
 cachedPredecessorTitle(meta: SessionHeader): ProjectionSnapshot | undefined
 
 /**
+ * Drop one Session's stored checkpoint, as when its log is removed.
+ *
+ * The record is derived data: a Session still resident in this process can
+ * write a fresh row from its own log, while removing the row of a Session
+ * whose log is gone leaves nothing behind. An absent record is not an error.
+ * @param id - the Session whose checkpoint record is dropped.
+ * @returns `true` when this call removed a record.
+ */
+discard(id: SessionId): Promise<boolean>
+
+/**
  * Hydrate projection cells for an already-prepared Session without another
  * persistence read. The cache seeds matching rows; the supplied exact log
  * advances every unit to the observation cut. No checkpoint is written
@@ -325,7 +336,7 @@ async write(session: Session): Promise<void>
 coldSnapshot( meta: SessionHeader, inheritedEventCount: SessionLogOffset, events: readonly SessionEvent[], ): ProjectionSnapshot
 ```
 
-Types: [Session](session.md) · [SessionEvent](session.md) · [SessionHeader](persistence.md) · [SessionLogOffset](session.md)
+Types: [Session](session.md) · [SessionEvent](session.md) · [SessionHeader](persistence.md) · [SessionId](core.md) · [SessionLogOffset](session.md)
 
 Source: [`packages/session/session-projection-cache/src/index.ts`](../../packages/session/session-projection-cache/src/index.ts)
 

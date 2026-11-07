@@ -948,3 +948,26 @@ describe('SessionProjectionCache summary reads', () => {
     expect(cache.cachedSnapshot(headerOf(SessionId('summary-absent')), summaryKeys)).toBeUndefined()
   })
 })
+
+describe('SessionProjectionCache record removal', () => {
+  it('drops one Session record from the table and the medium, then reports absence', async () => {
+    const { ctx, root, cache } = await harness()
+    const { session, owner } = await ownedSession(ctx, SessionId('removed-record'))
+    mark(session, ['keep'])
+    endTurn(session)
+    await whenWritten(ctx, session.id)
+    expect(await storedRows(root, session.id)).toBeDefined()
+
+    expect(await cache.discard(session.id)).toBe(true)
+    expect(await cache.discard(session.id)).toBe(false)
+    expect(await storedRows(root, session.id)).toBeUndefined()
+
+    // The live Session still folds its own log, so a later mandatory point may
+    // write a fresh row: derived data, never a wrong one.
+    mark(session, ['after'])
+    endTurn(session)
+    await whenWritten(ctx, session.id)
+    expect(await storedRows(root, session.id)).toBeDefined()
+    await owner.dispose()
+  })
+})

@@ -44,6 +44,12 @@ declare module '@deepseek-ai/dsh-typert-protocol' {
       readonly sessionId: SessionId
       readonly activity: readonly SessionActivity[]
     }
+    /**
+     * A write handle still owns the Session log, so its removal did not run.
+     * The deletion stays pending: the caller retries once the handle closes, or
+     * the next start completes it.
+     */
+    'workspace/session-held': { readonly sessionId: SessionId }
     /** The Session or its anchor is not in the Workspace's manual order. */
     'workspace/move-invalid': {
       readonly workspaceId: WorkspaceId
@@ -127,6 +133,25 @@ export interface WorkspaceArchiveSessionRequest {
 /** Session requested for restoration from the archived Session list. */
 export interface WorkspaceUnarchiveSessionRequest {
   readonly sessionId: SessionId
+}
+
+/**
+ * Session requested for irreversible removal, log and all.
+ *
+ * The Session keeps its row and stays openable until its log is gone, because
+ * every listing is projected from stored logs. A Session that still runs work,
+ * or whose log another handle owns, is refused instead of removed.
+ */
+export interface WorkspaceDeleteSessionRequest {
+  readonly sessionId: SessionId
+  /**
+   * Stop the Session running work — its turn, subagent descendants, owned
+   * background jobs, and active schedules — instead of refusing the deletion as
+   * `workspace/session-active`. The stops are requested after the log removal and
+   * are not awaited, so a write handle still closing when this call ran leaves
+   * the deletion pending: the caller retries, or the next start completes it.
+   */
+  readonly stopActivity?: boolean
 }
 
 /** Complete archived Session set after a mutation. */

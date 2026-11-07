@@ -421,6 +421,55 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
     ],
   },
   {
+    key: 'attachmentReferences',
+    summary: 'Which Sessions reference which content-addressed object, and the queue of objects that lost their last reference.',
+    description: 'Which Sessions reference which content-addressed object, and the queue of objects that lost their last reference. The ledger opens its domain at init, records a reference when an event commits, drops references when a Session log is removed, and reclaims a queued object that stayed unreferenced long enough.\n\nReclaim is gated on trust: until a pass has read every stored Session log without error, the ledger cannot prove that nobody references an object, and it removes none.',
+    methods: [
+      {
+        signature: 'holdersOf(id: AttachmentId): readonly SessionId[]',
+        description: 'Which Sessions the records name as holders of one object. A caller that needs to know whether an object is still referenced reads this instead of the domain.',
+        parameters: [{ name: 'id', description: 'content address to look up.' }],
+        returns: 'the holder Session ids in the order the ledger recorded them.',
+      },
+      {
+        signature: 'async reference(sessionId: SessionId, ids: readonly AttachmentId[]): Promise<void>',
+        description: 'Record that one Session references these objects, because a committed event named them. A duplicate reference leaves the order untouched, and a new reference revives a queued removal, so the object survives the pass that was about to take it.',
+        parameters: [{ name: 'sessionId', description: 'the Session whose log named the objects.' }, { name: 'ids', description: 'content addresses the committed event carries.' }],
+        returns: 'resolution after every affected record is durable.',
+      },
+      {
+        signature: 'noteSaved(id: AttachmentId): void',
+        description: 'Claim one object this process just committed, before any event references it. A claim keeps a pass from removing an object whose reference has not landed yet, and it expires after Config.minAgeMs.',
+        parameters: [{ name: 'id', description: 'content address of the object the backend published.' }],
+        returns: 'nothing; the claim lives in this process\'s memory.',
+      },
+      {
+        signature: 'queuedForRemoval(): readonly AttachmentId[]',
+        description: 'Objects waiting in the queue for a reclaim pass. A caller that removed a reference can use this to see the queue rather than guess at it.',
+        parameters: [],
+        returns: 'the content addresses queued for removal, in no promised order.',
+      },
+      {
+        signature: 'async detachSession(sessionId: SessionId): Promise<number>',
+        description: 'Drop every reference one Session holds, as when its log is removed. Each object that loses its last reference is queued for reclaim; one another Session still references keeps its record and its bytes.',
+        parameters: [{ name: 'sessionId', description: 'the Session whose references are gone.' }],
+        returns: 'how many objects were queued for removal.',
+      },
+      {
+        signature: 'async buildFromLogs(): Promise<void>',
+        description: 'Rebuild the reference records from every stored Session log. A log that cannot be read leaves the ledger untrusted rather than partially rebuilt: a missing reference would let a pass remove an object some Session still needs. Records the rebuilt logs do not name lost their last reference and are queued the way a Session removal queues them.',
+        parameters: [],
+        returns: 'resolution once every record is durable and the ledger is marked built.',
+      },
+      {
+        signature: 'async sweepOnce(): Promise<ReclaimOutcome>',
+        description: 'Handle the queued objects that have waited long enough. An entry is dropped when a Session references the object again, kept when a fresh in-process claim or the backend\'s own age guard protects it, and counted as removed when the backend reports the object gone or already absent.',
+        parameters: [],
+        returns: 'this pass\'s counts.',
+      },
+    ],
+  },
+  {
     key: 'attachments',
     summary: 'Immutable binary attachment service.',
     description: 'Immutable binary attachment service. Implementations validate bytes before publishing a reference.',
@@ -481,6 +530,13 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         parameters: [{ name: 'ref', description: 'durable normalized attachment reference.' }],
         returns: 'an absolute host path, or undefined when this backend is not host-file-backed.',
         throws: ['an AttachmentError when the durable reference is invalid.'],
+      },
+      {
+        signature: 'discard(id: AttachmentId, options?: AttachmentDiscardOptions): Promise<AttachmentDiscardResult>',
+        description: 'Remove one stored object and every display alias of it.\n\nContent-addressed objects are shared across Sessions, so a backend removes exactly the identifier it is handed and tracks no reference itself: the caller proves no Session still references the object. Removal is irreversible, and an object another caller already removed is not an error. A backend without removable objects keeps the default `absent`, which empties the caller queue without ever reclaiming space.',
+        parameters: [{ name: 'id', description: 'content-addressed identifier of the object to remove.' }, { name: 'options', description: 'minimum object age.' }],
+        returns: 'the removal outcome.',
+        throws: ['an `AttachmentError` when the identifier is not a valid reference.'],
       },
       {
         signature: 'saveFile(input: SaveFileAttachment): Promise<FileAttachmentRef>',
@@ -2923,6 +2979,13 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         parameters: [{ name: 'options', description: 'optional cancellation.' }],
         returns: 'one snapshot per stored session.',
       },
+      {
+        signature: 'abstract delete(id: SessionId, options?: SessionPersistenceDeleteOptions): Promise<boolean>',
+        description: 'Remove one stored session\'s durable artifact and every generation of it.\n\nRemoval is irreversible: no backend keeps a recoverable copy, and the operation is idempotent, so a session another caller already removed is not an error. Once it resolves, the session is absent from `stat`, `list`, and `open`; a session this process still has open for writing is never removed from under its handle. Backends take no ownership of any other store a session\'s events mention: attachments, spill files, and derived indexes are each their owner\'s to reconcile.',
+        parameters: [{ name: 'id', description: 'the stored session to remove.' }, { name: 'options', description: 'optional cancellation.' }],
+        returns: '`true` when this call removed the artifact, `false` when the session was already absent.',
+        throws: ['{SessionAlreadyOwnedError} when a write handle in this process or another one still owns the session.'],
+      },
     ],
   },
   {
@@ -2941,6 +3004,12 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         description: 'Read only a predecessor checkpoint\'s title as a zero-I/O listing hint.\n\nThe authoritative Session header supplies the lifecycle identity. A cache checkpoint can lag that log but cannot lead it because writes flush the log first, so a matching predecessor title is a genuine (possibly stale) fact from this Session. The registry still requires the current title projection\'s row version and schema. No other predecessor projection is exposed: format normalization can change their current meaning, and the cachedSnapshot / hydration paths continue to reject them.',
         parameters: [{ name: 'meta', description: 'authoritative listed Session header.' }],
         returns: 'a title-only block at the stored title row\'s watermark, or `undefined` when the record is current, newer, unrelated, missing, or incompatible with the title unit.',
+      },
+      {
+        signature: 'discard(id: SessionId): Promise<boolean>',
+        description: 'Drop one Session\'s stored checkpoint, as when its log is removed.\n\nThe record is derived data: a Session still resident in this process can write a fresh row from its own log, while removing the row of a Session whose log is gone leaves nothing behind. An absent record is not an error.',
+        parameters: [{ name: 'id', description: 'the Session whose checkpoint record is dropped.' }],
+        returns: '`true` when this call removed a record.',
       },
       {
         signature: 'hydratePrepared( session: Session, events: readonly SessionEvent[], ): ProjectionSnapshot',
@@ -4552,6 +4621,12 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         returns: 'the complete resulting archive set.',
       },
       {
+        signature: '@Remote(\'deleteSession\') deleteSession(request: WorkspaceDeleteSessionRequest): Promise<WorkspaceArchiveValue>',
+        description: 'Remove one Session and its log irreversibly, then drop it from Workspace accounting. A Session with running work is refused until the caller asks for the stop, and a Session whose log another handle still owns stays pending rather than half-deleted.',
+        parameters: [{ name: 'request', description: 'Session identity to delete and whether to stop its work.' }],
+        returns: 'the complete resulting archive set.',
+      },
+      {
         signature: '@Remote(\'unarchiveSession\') unarchiveSession(request: WorkspaceUnarchiveSessionRequest): Promise<WorkspaceArchiveValue>',
         description: 'Restore one archived Session to Workspace grouping surfaces.',
         parameters: [{ name: 'request', description: 'Session identity to unarchive.' }],
@@ -4667,6 +4742,13 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         description: 'Unarchive one session durably by dropping it from the registry-global archive set; the accounting slot was never touched, so the session returns to its recorded position. Unarchiving runs no session-existence check because removing an id cannot introduce an unknown one, so an entry whose session is gone still resolves. An id that is not archived resolves without writing.',
         parameters: [{ name: 'sessionId', description: 'The session to unarchive.' }],
         returns: 'resolution after durability.',
+      },
+      {
+        signature: 'deleteSession(sessionId: SessionId, options: DeleteSessionOptions = {}): Promise<void>',
+        description: 'Delete one Session irreversibly: its log goes first, then every trace of it in this registry.\n\nThe Session must exist, and without `stopActivity` it must also be inactive — the `workspace/session-activity` waterfall is asked once, and any reported activity rejects before anything is written. A pending-deletion intent is recorded, then `workspace/session-release` asks every in-process owner to drop the Session\'s log — a live Agent is disposed so the write handle it owns closes — and the removal that follows is the commit point every read face observes: listings and search are projected from stored logs, so a Session whose log survives an interrupted delete stays visible rather than vanishing with its bytes still on disk. Once the log is gone this registry drops the Session from its workspace record and from the archive and pin sets, forgets its header, and emits `workspace/session-deleted` for the records other packages derive from it. Deletion removes only this Session: the descendants it spawned keep their own self-contained logs.',
+        parameters: [{ name: 'sessionId', description: 'the Session to delete.' }, { name: 'options', description: 'whether running work is stopped instead of refusing.' }],
+        returns: 'resolution after the log removal and every accounting write are durable.',
+        throws: ['{WorkspaceUnknownSessionError} when no live Session or stored log names it.', '{WorkspaceActiveSessionError} when work still runs and `stopActivity` is unset.', '{SessionAlreadyOwnedError} when another process still owns the log after every in-process owner released it: the intent stays durable, so a later start completes the deletion.'],
       },
       {
         signature: 'pinSession(sessionId: SessionId): Promise<void>',
@@ -4870,6 +4952,14 @@ export const EVENT_API: readonly EventApiEntry[] = [
     summary: 'Ask composed answerers for one decision.',
     description: 'Ask composed answerers for one decision. Return an outcome to claim the request or call `next()` to delegate. Scope-filtered dispatch (`@deepseek-ai/dsh-scope`): agent-scoped listeners receive only that agent.',
     parameters: [{ name: 'req', description: 'pending approval request.' }],
+  },
+  {
+    name: 'attachments/saved',
+    mode: 'emit',
+    signature: '\'attachments/saved\'(id: AttachmentId): void',
+    summary: 'Emitted after one content-addressed object durably committed, before any caller can reference it.',
+    description: 'Emitted after one content-addressed object durably committed, before any caller can reference it. A consumer that tracks which Sessions reference an object treats the identifier as claimed from here until it sees a committed reference, so a sweep cannot remove an object between its commit and the Session event that names it.',
+    parameters: [{ name: 'id', description: 'durable identifier of the object this backend just committed.' }],
   },
   {
     name: 'authorization/settled',
@@ -5424,6 +5514,22 @@ export const EVENT_API: readonly EventApiEntry[] = [
     parameters: [{ name: 'request', description: 'the session about to be archived.' }, { name: 'next', description: 'delegate to the remaining providers.' }],
   },
   {
+    name: 'workspace/session-deleted',
+    mode: 'emit',
+    signature: '\'workspace/session-deleted\'(notice: SessionDeletedNotice): void',
+    summary: 'Announce that one Session log was removed and this registry dropped every trace of it, so each other owner of a derived record about that Session can retire its copy.',
+    description: 'Announce that one Session log was removed and this registry dropped every trace of it, so each other owner of a derived record about that Session can retire its copy. The removal is already durable when this dispatches, and the Session is no longer in any workspace, archive, or pin set. Listeners never veto it: a listener failure is logged and the rest still run.',
+    parameters: [{ name: 'notice', description: 'the Session whose log no longer exists.' }],
+  },
+  {
+    name: 'workspace/session-release',
+    mode: 'parallel',
+    signature: '\'workspace/session-release\'(request: SessionActivityRequest): Promise<void> | void',
+    summary: 'Release every in-process owner of one Session\'s stored log, asked before that log is removed.',
+    description: 'Release every in-process owner of one Session\'s stored log, asked before that log is removed. The durable pending-deletion intent is already written when this dispatches. Each owner drops what would otherwise keep the log owned by a write handle — for the agent loop, disposing that Session\'s live Agent, which drains it and closes the handle — and awaits its own release, because the removal follows in the same call. Nothing is rolled back for a failing owner: the registry still attempts the removal, and a log that stays owned keeps its intent so a later start completes the deletion.',
+    parameters: [{ name: 'request', description: 'the Session whose log is about to be removed.' }],
+  },
+  {
     name: 'workspace/session-stop',
     mode: 'parallel',
     signature: '\'workspace/session-stop\'(request: SessionActivityRequest): Promise<void> | void',
@@ -5698,6 +5804,14 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   {
     name: 'AttachmentAdmissionPart',
     declaration: 'export type AttachmentAdmissionPart = PromptContentPart | {\n    readonly type: \'file\';\n    readonly attachment: FileAttachmentRef;\n} | {\n    readonly type: \'image\';\n    readonly attachment: ImageAttachmentRef;\n    readonly encodedBytes: number;\n};',
+  },
+  {
+    name: 'AttachmentDiscardOptions',
+    declaration: 'export interface AttachmentDiscardOptions {\n    readonly minAgeMs?: number;\n}',
+  },
+  {
+    name: 'AttachmentDiscardResult',
+    declaration: 'export type AttachmentDiscardResult = \'removed\' | \'absent\' | \'held\';',
   },
   {
     name: 'AttachmentError',
@@ -6230,6 +6344,10 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   {
     name: 'DeepSeekLlmApiJson',
     declaration: 'export type DeepSeekLlmApiJson = null | boolean | number | string | DeepSeekLlmApiJson[] | {\n    [key: string]: DeepSeekLlmApiJson;\n};',
+  },
+  {
+    name: 'DeleteSessionOptions',
+    declaration: 'export interface DeleteSessionOptions {\n    readonly stopActivity?: boolean;\n}',
   },
   {
     name: 'DeliveryRetentionBounds',
@@ -7864,6 +7982,10 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export type ReasoningEffortId = Branded<\'ReasoningEffortId\'>;',
   },
   {
+    name: 'ReclaimOutcome',
+    declaration: 'export interface ReclaimOutcome {\n    removed: number;\n    revived: number;\n    retried: number;\n}',
+  },
+  {
     name: 'RecommendationDetails',
     declaration: 'export type RecommendationDetails = {\n    readonly status: \'available\';\n    readonly title: LocalizedText;\n    readonly description: LocalizedText;\n    readonly enabled: boolean;\n} | {\n    readonly status: \'refused\';\n    readonly reason: \'unknown\' | \'unavailable\' | \'not-live-root\' | \'closing\';\n};',
   },
@@ -8356,6 +8478,10 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export interface SessionCreateValue {\n    readonly sessionId: SessionId;\n    readonly agentPreset?: string;\n}',
   },
   {
+    name: 'SessionDeletedNotice',
+    declaration: 'export interface SessionDeletedNotice {\n    readonly sessionId: SessionId;\n}',
+  },
+  {
     name: 'SessionEndInput',
     declaration: 'export interface SessionEndInput {\n    reason: \'clear\' | \'logout\' | \'prompt_input_exit\' | \'resume\' | \'other\';\n    sessionId: string;\n}',
   },
@@ -8610,6 +8736,10 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   {
     name: 'SessionPersistenceCreateOptions',
     declaration: 'export interface SessionPersistenceCreateOptions {\n    readonly signal?: AbortSignal;\n    readonly inheritedEventCount?: SessionLogOffset;\n}',
+  },
+  {
+    name: 'SessionPersistenceDeleteOptions',
+    declaration: 'export interface SessionPersistenceDeleteOptions {\n    readonly signal?: AbortSignal;\n}',
   },
   {
     name: 'SessionPersistenceListOptions',
@@ -10206,6 +10336,10 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   {
     name: 'WorkspaceDeleteRequest',
     declaration: 'export interface WorkspaceDeleteRequest {\n    readonly workspaceId: WorkspaceId;\n}',
+  },
+  {
+    name: 'WorkspaceDeleteSessionRequest',
+    declaration: 'export interface WorkspaceDeleteSessionRequest {\n    readonly sessionId: SessionId;\n    readonly stopActivity?: boolean;\n}',
   },
   {
     name: 'WorkspaceDeleteValue',

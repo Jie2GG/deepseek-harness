@@ -15,6 +15,7 @@ import {
   createWorkspaceStateStream,
   WorkspaceArchiveError,
   WorkspaceController,
+  WorkspaceDeleteError,
   WorkspaceCreateError,
   type WorkspaceFollowSink,
 } from '../src/client/index.ts'
@@ -421,6 +422,13 @@ describe('WorkspaceController', () => {
       name: 'WorkspaceArchiveError',
       rpcError: { code: 'workspace/session-active', details: { activity: [{ kind: 'probe' }, { kind: 'probe-items', items: [{ id: 'item-1' }] }] } },
     })
+    // A delete refusal carries its own error name and message prefix, so a
+    // surface never reports a delete as an archive.
+    const held = new RemoteError('workspace/session-held', 'log is owned', { sessionId: sid('session') })
+    mock.remote.workspace.deleteSession.mockResolvedValueOnce(err(held))
+    const deleteHeld = controller.deleteSession(sid('session'))
+    await expect(deleteHeld).rejects.toBeInstanceOf(WorkspaceDeleteError)
+    await expect(deleteHeld).rejects.toThrow('workspace session delete failed: workspace/session-held: log is owned')
     mock.remote.workspace.unarchiveSession.mockResolvedValueOnce(err(missingSession))
     await expect(controller.unarchiveSession(sid('session')))
       .rejects.toThrow('workspace session unarchive failed: session/not-found: missing session')

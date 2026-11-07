@@ -183,6 +183,84 @@ interface RequestImageAttachment {
 
 Generated from source by `scripts/gen-cordis-catalog.ts` (verified fresh by `pnpm run verify-cordis-catalog` in doc-sync; regenerate with `pnpm run gen-cordis-catalog`) — the language sides differ only in locale-specific paired document paths. Signature blocks use a `ts cordis-catalog` fence and keep the original source JSDoc; dispatch modes are defined in the [primer](../cordis-primer.zh.md#dispatch-modes), and the framework-inherited `ctx` API lives in [cordis-api/inherited.md](../cordis-api/inherited.md).
 
+<a id="ctxattachmentreferences--attachmentreferences"></a>
+
+### `ctx.attachmentReferences` — `AttachmentReferences`
+
+Which Sessions reference which content-addressed object, and the queue of objects that lost their last reference. The ledger opens its domain at init, records a reference when an event commits, drops references when a Session log is removed, and reclaims a queued object that stayed unreferenced long enough.
+
+Reclaim is gated on trust: until a pass has read every stored Session log without error, the ledger cannot prove that nobody references an object, and it removes none.
+
+```ts cordis-catalog
+/**
+ * Which Sessions the records name as holders of one object. A caller that
+ * needs to know whether an object is still referenced reads this instead of
+ * the domain.
+ * @param id - content address to look up.
+ * @returns the holder Session ids in the order the ledger recorded them.
+ */
+holdersOf(id: AttachmentId): readonly SessionId[]
+
+/**
+ * Record that one Session references these objects, because a committed event
+ * named them. A duplicate reference leaves the order untouched, and a new
+ * reference revives a queued removal, so the object survives the pass that was
+ * about to take it.
+ * @param sessionId - the Session whose log named the objects.
+ * @param ids - content addresses the committed event carries.
+ * @returns resolution after every affected record is durable.
+ */
+async reference(sessionId: SessionId, ids: readonly AttachmentId[]): Promise<void>
+
+/**
+ * Claim one object this process just committed, before any event references it.
+ * A claim keeps a pass from removing an object whose reference has not landed
+ * yet, and it expires after {@link Config.minAgeMs}.
+ * @param id - content address of the object the backend published.
+ * @returns nothing; the claim lives in this process's memory.
+ */
+noteSaved(id: AttachmentId): void
+
+/**
+ * Objects waiting in the queue for a reclaim pass. A caller that removed a
+ * reference can use this to see the queue rather than guess at it.
+ * @returns the content addresses queued for removal, in no promised order.
+ */
+queuedForRemoval(): readonly AttachmentId[]
+
+/**
+ * Drop every reference one Session holds, as when its log is removed. Each
+ * object that loses its last reference is queued for reclaim; one another
+ * Session still references keeps its record and its bytes.
+ * @param sessionId - the Session whose references are gone.
+ * @returns how many objects were queued for removal.
+ */
+async detachSession(sessionId: SessionId): Promise<number>
+
+/**
+ * Rebuild the reference records from every stored Session log. A log that
+ * cannot be read leaves the ledger untrusted rather than partially rebuilt: a
+ * missing reference would let a pass remove an object some Session still needs.
+ * Records the rebuilt logs do not name lost their last reference and are queued
+ * the way a Session removal queues them.
+ * @returns resolution once every record is durable and the ledger is marked built.
+ */
+async buildFromLogs(): Promise<void>
+
+/**
+ * Handle the queued objects that have waited long enough. An entry is dropped
+ * when a Session references the object again, kept when a fresh in-process claim
+ * or the backend's own age guard protects it, and counted as removed when the
+ * backend reports the object gone or already absent.
+ * @returns this pass's counts.
+ */
+async sweepOnce(): Promise<ReclaimOutcome>
+```
+
+Types: [SessionId](core.zh.md)
+
+Source: [`packages/attachment/attachment-reclaim/src/index.ts`](../../packages/attachment/attachment-reclaim/src/index.ts)
+
 <a id="ctxattachments--attachmentstore-abstract-seam"></a>
 
 ### `ctx.attachments` — `AttachmentStore` (abstract seam)
@@ -258,6 +336,22 @@ abstract readImage(ref: ImageAttachmentRef, signal?: AbortSignal): Promise<Store
  * @throws an AttachmentError when the durable reference is invalid.
  */
 imageHostPath(ref: ImageAttachmentRef): string | undefined
+
+/**
+ * Remove one stored object and every display alias of it.
+ *
+ * Content-addressed objects are shared across Sessions, so a backend removes
+ * exactly the identifier it is handed and tracks no reference itself: the
+ * caller proves no Session still references the object. Removal is
+ * irreversible, and an object another caller already removed is not an error.
+ * A backend without removable objects keeps the default `absent`, which
+ * empties the caller queue without ever reclaiming space.
+ * @param id - content-addressed identifier of the object to remove.
+ * @param options - minimum object age.
+ * @returns the removal outcome.
+ * @throws an `AttachmentError` when the identifier is not a valid reference.
+ */
+discard(id: AttachmentId, options?: AttachmentDiscardOptions): Promise<AttachmentDiscardResult>
 
 /**
  * Durably commit one file byte-for-byte before its owning session event is
@@ -381,4 +475,29 @@ retirePrompt(agent: Agent, requestId: string): void
 Types: [Agent](core.zh.md) · [SessionId](core.zh.md)
 
 Source: [`packages/client/file-upload/src/index.ts`](../../packages/client/file-upload/src/index.ts)
+
+<a id="attachments-events"></a>
+
+### `attachments/*` events
+
+<a id="attachmentssaved--emit"></a>
+
+#### `attachments/saved` — emit
+
+Emitted after one content-addressed object durably committed, before any caller can reference it. A consumer that tracks which Sessions reference an object treats the identifier as claimed from here until it sees a committed reference, so a sweep cannot remove an object between its commit and the Session event that names it.
+
+```ts cordis-catalog
+/**
+ * Emitted after one content-addressed object durably committed, before any
+ * caller can reference it. A consumer that tracks which Sessions reference
+ * an object treats the identifier as claimed from here until it sees a
+ * committed reference, so a sweep cannot remove an object between its
+ * commit and the Session event that names it.
+ * @param id - durable identifier of the object this backend just committed.
+ * @mode emit
+ */
+'attachments/saved'(id: AttachmentId): void
+```
+
+Source: [`packages/attachment/attachment/src/index.ts`](../../packages/attachment/attachment/src/index.ts)
 <!-- END GENERATED cordis-surface -->

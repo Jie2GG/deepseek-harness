@@ -1,12 +1,15 @@
 # The Web account login scenario points the shipped account provider at a loopback
 # Platform double. The scenario substitutes {{origin}} after the listener binds,
-# so no port is ever committed here.
+# so no port is ever committed here. The bundle layer disables the account
+# plugins, so this scenario re-enables both entries.
 - id: deepseek-account
+  disabled: false
   config:
     platformOrigin: "{{origin}}"
     allowLoopbackHttp: true
 # The scenario signs in from the account menu after initial setup.
 - id: ui-settings-account
+  disabled: false
   config:
     step: done
     completion: completed

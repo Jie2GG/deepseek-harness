@@ -3,6 +3,7 @@
 import { notifySubscribers } from '@deepseek-ai/dsh-client-store'
 import type {} from '@deepseek-ai/dsh-api-workspace-controller/remote'
 import { isRemoteFailure } from '@deepseek-ai/dsh-api-gateway/client'
+import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import type { RemoteFailure, RemoteResult, TypertClientRemote } from '@deepseek-ai/dsh-typert-protocol'
 import type {
   WorkspaceArchiveSessionRequest,
@@ -10,6 +11,7 @@ import type {
   WorkspaceBaseline,
   WorkspaceCreateRequest,
   WorkspaceCreateValue,
+  WorkspaceDeleteSessionRequest,
   WorkspaceDeleteValue,
   WorkspaceInsertSessionBeforeRequest,
   WorkspaceOrderValue,
@@ -182,28 +184,66 @@ export class ClientWorkspaceModel implements WorkspaceFollowSink {
   }
 
   /**
+   * Run one command that returns the complete archive set and install its
+   * answer, ignoring a reply a later Session command or a pushed set superseded.
+   * @param call - the generated Remote command to run.
+   * @param unpin - a Session whose pin the Host dropped in the same durable
+   *   write, mirrored here so no frame shows the row both pinned and archived.
+   * @returns generated Remote result.
+   */
+  private async archiveHop(
+    call: () => Promise<RemoteResult<WorkspaceArchiveValue>>,
+    unpin: SessionId | null,
+  ): Promise<RemoteResult<WorkspaceArchiveValue>> {
+    const requestSeq = ++this.archiveRequestSeq
+    const result = await call()
+    if (result.ok && requestSeq === this.archiveRequestSeq) {
+      this.installArchived(result.value.archivedSessionIds)
+      if (unpin !== null) this.installPinned(this.pinnedSessionIds.filter(id => id !== unpin))
+    }
+    return result
+  }
+
+  /**
    * Archive one Session and install the returned complete archive set.
    * A reply superseded by a later archive request or a pushed set installs nothing.
    * @param sessionId - Session to archive.
    * @param options - Whether the Host stops the Session's running work instead of refusing.
    * @returns generated Remote result.
    */
-  async archiveSession(
+  archiveSession(
     sessionId: WorkspaceArchiveSessionRequest['sessionId'],
     options: Pick<WorkspaceArchiveSessionRequest, 'stopActivity'> = {},
   ): Promise<RemoteResult<WorkspaceArchiveValue>> {
-    const requestSeq = ++this.archiveRequestSeq
-    const result = await this.remote.archiveSession({
+    return this.archiveHop(
+      () => this.remote.archiveSession({
+        sessionId,
+        ...(options.stopActivity === true ? { stopActivity: true } : {}),
+      }),
       sessionId,
-      ...(options.stopActivity === true ? { stopActivity: true } : {}),
-    })
-    if (result.ok && requestSeq === this.archiveRequestSeq) {
-      this.installArchived(result.value.archivedSessionIds)
-      // The Host drops an archived session's pin in the same durable write;
-      // mirror that locally so no frame shows the row both archived and pinned.
-      this.installPinned(this.pinnedSessionIds.filter(id => id !== sessionId))
-    }
-    return result
+    )
+  }
+
+  /**
+   * Delete one Session and install the returned complete archive set. The
+   * Session leaves every Workspace row through the pushed record, so this call
+   * only keeps the archive and pin sets honest for the moment between the
+   * removal and that frame.
+   * @param sessionId - Session to delete.
+   * @param options - Whether the Host stops the Session running work instead of refusing.
+   * @returns generated Remote result.
+   */
+  deleteSession(
+    sessionId: WorkspaceDeleteSessionRequest['sessionId'],
+    options: Pick<WorkspaceDeleteSessionRequest, 'stopActivity'> = {},
+  ): Promise<RemoteResult<WorkspaceArchiveValue>> {
+    return this.archiveHop(
+      () => this.remote.deleteSession({
+        sessionId,
+        ...(options.stopActivity === true ? { stopActivity: true } : {}),
+      }),
+      sessionId,
+    )
   }
 
   /**
@@ -212,17 +252,11 @@ export class ClientWorkspaceModel implements WorkspaceFollowSink {
    * @param sessionId - Session to unarchive.
    * @returns generated Remote result.
    */
-  async unarchiveSession(
+  unarchiveSession(
     sessionId: WorkspaceUnarchiveSessionRequest['sessionId'],
   ): Promise<RemoteResult<WorkspaceArchiveValue>> {
-    const requestSeq = ++this.archiveRequestSeq
-    const result = await this.remote.unarchiveSession({ sessionId })
-    if (result.ok && requestSeq === this.archiveRequestSeq) {
-      this.installArchived(result.value.archivedSessionIds)
-    }
-    return result
+    return this.archiveHop(() => this.remote.unarchiveSession({ sessionId }), null)
   }
-
   /**
    * Pin one Session and install the returned complete pin set.
    * A reply superseded by a later pin request or a pushed set installs nothing.

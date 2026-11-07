@@ -1,6 +1,8 @@
 /** Workspace command implementation and stable Remote failure mapping. */
 
 import type { Context } from '@deepseek-ai/cordis'
+import type { SessionId } from '@deepseek-ai/dsh-session/types'
+import { SessionAlreadyOwnedError } from '@deepseek-ai/dsh-session-persistence'
 import type { Workspace } from '@deepseek-ai/dsh-workspace'
 import {
   WorkspaceActiveSessionError,
@@ -18,6 +20,7 @@ import type {
   WorkspaceCreateRequest,
   WorkspaceCreateValue,
   WorkspaceDeleteRequest,
+  WorkspaceDeleteSessionRequest,
   WorkspaceDeleteValue,
   WorkspaceInsertBeforeRequest,
   WorkspaceInsertSessionBeforeRequest,
@@ -166,20 +169,57 @@ export class WorkspaceCommands {
         request.stopActivity === true ? { stopActivity: true } : {},
       )
     } catch (error) {
-      if (error instanceof WorkspaceUnknownSessionError) {
-        throw new RemoteError('session/not-found', error.message, { sessionId: request.sessionId }, { cause: error })
-      }
-      if (error instanceof WorkspaceActiveSessionError) {
-        throw new RemoteError(
-          'workspace/session-active',
-          error.message,
-          { sessionId: request.sessionId, activity: error.activity },
-          { cause: error },
-        )
-      }
-      throw error
+      this.refuseSessionAction(request.sessionId, error, false)
     }
     return { archivedSessionIds: [...this.ctx.workspaceRegistry.archivedSessionIds] }
+  }
+
+  /**
+   * Remove one Session and its log irreversibly. A Session with running work is
+   * refused as `workspace/session-active` unless `stopActivity` asks the
+   * providers to stop it; a Session whose log another handle still owns is
+   * refused as `workspace/session-held`, which leaves the deletion pending so the
+   * caller or the next start can complete it.
+   * @param request - Session identity to delete and whether to stop its work.
+   * @returns the complete resulting archive set.
+   */
+  async deleteSession(request: WorkspaceDeleteSessionRequest): Promise<WorkspaceArchiveValue> {
+    try {
+      await this.ctx.workspaceRegistry.deleteSession(
+        request.sessionId,
+        request.stopActivity === true ? { stopActivity: true } : {},
+      )
+    } catch (error) {
+      this.refuseSessionAction(request.sessionId, error, true)
+    }
+    return { archivedSessionIds: [...this.ctx.workspaceRegistry.archivedSessionIds] }
+  }
+
+  /**
+   * Raise the stable Remote failure a Session-state refusal carries, or rethrow
+   * the error when it is not a refusal this command owns. An archive never
+   * reaches the held-log case, because it writes no log byte; a delete reports it
+   * so the caller can retry once the handle closes.
+   * @param sessionId - the Session the refused action named.
+   * @param error - the failure the registry raised.
+   * @param includeHeld - whether an owned log is a mapped refusal for this action.
+   */
+  private refuseSessionAction(sessionId: SessionId, error: unknown, includeHeld: boolean): never {
+    if (error instanceof WorkspaceUnknownSessionError) {
+      throw new RemoteError('session/not-found', error.message, { sessionId }, { cause: error })
+    }
+    if (error instanceof WorkspaceActiveSessionError) {
+      throw new RemoteError(
+        'workspace/session-active',
+        error.message,
+        { sessionId, activity: error.activity },
+        { cause: error },
+      )
+    }
+    if (includeHeld && error instanceof SessionAlreadyOwnedError) {
+      throw new RemoteError('workspace/session-held', error.message, { sessionId }, { cause: error })
+    }
+    throw error
   }
 
   /**

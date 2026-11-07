@@ -163,6 +163,10 @@ class TestPersistence extends SessionPersistence {
     return Promise.resolve({ header: structuredClone(entry.meta), revision: entryRevision(entry) })
   }
 
+  delete(id: SessionIdType): Promise<boolean> {
+    return Promise.resolve(TestPersistence.entries.delete(id))
+  }
+
   list(options?: { signal?: AbortSignal }): Promise<readonly SessionPersistenceSnapshot[]> {
     TestPersistence.listCalls += 1
     TestPersistence.listSignals.push(options?.signal)

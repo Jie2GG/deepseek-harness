@@ -103,6 +103,10 @@ class RecordingFileStore extends RecordingStore {
   }
 }
 
+function fileOf(digest: string): AttachmentId {
+  return AttachmentId(`sha256:${digest}`)
+}
+
 function image(value: number, mediaType: ImageMediaType = 'image/png'): SaveImageAttachment {
   return { data: Uint8Array.of(value), mediaType, name: `${value}.png` }
 }
@@ -172,6 +176,8 @@ describe('AttachmentStore.readImageRequest', () => {
       data: (async function* (): AsyncIterable<Uint8Array> { yield Uint8Array.of(1) })(),
       name: 'notes.txt',
     })).rejects.toMatchObject({ code: 'ATTACHMENT_FILES_UNSUPPORTED' })
+    expect(await store.discard(fileOf('ab'.repeat(32)))).toBe('absent')
+    expect(await store.discard(fileOf('ab'.repeat(32)), { minAgeMs: 1 })).toBe('absent')
     const fileRef = {
       attachmentId: AttachmentId(`sha256:${'ab'.repeat(32)}`),
       name: 'notes.txt',
