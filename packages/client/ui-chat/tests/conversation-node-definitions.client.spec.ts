@@ -3251,4 +3251,18 @@ describe('human-message edit in Chat', () => {
       voidedRanges: [{ start: 2, end: 6 }, { start: 8, end: 12 }],
     })
   })
+
+  it('voids a superseded answer whose rewrite opened before the loaded window', () => {
+    // Pagination can start the window on the Turn that only carries the newest
+    // copy, so the prompt row begins at that copy instead of at its first edit.
+    const value = assembler([...editEntries(), ...secondEditEntries()].slice(10), true)
+    const view = snapshot(value)
+    expect(bubbles(view)).toEqual([
+      'user@14',
+      'turn-process@14.9',
+      'assistant-step@15',
+      'turn-tail@17.1',
+    ])
+    expect(node(view, 'user')?.data).toMatchObject({ seq: 14, voidedRanges: [{ start: 8, end: 12 }] })
+  })
 })

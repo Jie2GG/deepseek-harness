@@ -3,6 +3,7 @@ import type {
   ContextMessageNode, ConversationContextReader, ConversationLocation, ConversationNodeDefinition,
   SteeringMessageNode, UserMessageNode,
 } from '@deepseek-ai/dsh-client-ui-conversation/client'
+import type { SessionEvent } from '@deepseek-ai/dsh-session'
 import { isAppendSurfaceEvent, isReplacementSurfaceEvent } from '@deepseek-ai/dsh-session/surface'
 import type { MessageEditVoidRange } from '../contract/chat-nodes.ts'
 import type { InboxState } from './inbox.ts'
@@ -90,22 +91,27 @@ function followsProcessEvidence(location: ConversationLocation, reader: Conversa
 }
 
 /**
- * Half-open log-seq range one rewrite supersedes, in the same form the session
- * surface records: the edited prompt through the history before the Turn that
- * carries the replacement copy, whose boundary events stay current work.
- * @param editedSeq - log seq of the message the rewrite replaced.
- * @param copySeq - log seq of the replacement copy itself.
- * @param carryingTurnStart - log seq of the copy's own Turn start, if resolved.
- * @returns the range the rewrite voids.
+ * Half-open log-seq range one replacement copy supersedes, in the same form the
+ * session surface records: the edited prompt through the history before the Turn
+ * carrying the copy, whose boundary events stay current work. Pagination can
+ * load a window that opens on a later copy, so every copy carries its own range
+ * instead of waiting for an update that never arrives.
+ * @param event - the `user/message` event starting or updating the row.
+ * @param location - that event's Location, whose Turn start bounds the range.
+ * @returns the superseded range, or undefined for an ordinary human prompt.
  */
-function voidedRangeForEdit(
-  editedSeq: number,
-  copySeq: number,
-  carryingTurnStart: number | undefined,
-): MessageEditVoidRange {
+function voidedRangeForCopy(
+  event: SessionEvent<'user/message'>,
+  location: ConversationLocation,
+): MessageEditVoidRange | undefined {
+  const source = event.data.source
+  if (source.kind !== 'user-edit') return undefined
+  const carryingTurnStart = location.kind === 'turn' || location.kind === 'step'
+    ? location.turn.start?.seq
+    : undefined
   const carriesTurn = carryingTurnStart !== undefined
-    && carryingTurnStart > editedSeq && carryingTurnStart < copySeq
-  return { start: editedSeq, end: carriesTurn ? carryingTurnStart : copySeq }
+    && carryingTurnStart > source.editedSeq && carryingTurnStart < event.seq
+  return { start: source.editedSeq, end: carriesTurn ? carryingTurnStart : event.seq }
 }
 
 /** User, steering, and injected-context message classification Definition. */
@@ -145,6 +151,7 @@ export const messageDefinition: ConversationNodeDefinition<MessageNode> = {
     }
     const id = String(event.data.id)
     const claim = reader.previous<InboxState>('inbox-next-step')?.state
+    const voided = voidedRangeForCopy(event, match.location)
     return claim?.currentClaimed.has(id) === true
       ? {
         kind: 'steering',
@@ -153,6 +160,7 @@ export const messageDefinition: ConversationNodeDefinition<MessageNode> = {
         time: event.time,
         content: event.data.content,
         source: event.data.source,
+        ...(voided === undefined ? {} : { voidedRanges: [voided] }),
         ...claim.firstClaimedHuman === id && followsProcessEvidence(match.location, reader)
           ? { batchStart: true }
           : {},
@@ -164,6 +172,7 @@ export const messageDefinition: ConversationNodeDefinition<MessageNode> = {
         time: event.time,
         content: event.data.content,
         source: event.data.source,
+        ...(voided === undefined ? {} : { voidedRanges: [voided] }),
       }
   },
   update: (context, match) => {
@@ -174,22 +183,15 @@ export const messageDefinition: ConversationNodeDefinition<MessageNode> = {
     // position become the copy's.
     if (state.kind !== 'user' && state.kind !== 'steering') return state
     if (event.type !== 'user/message' || event.surfaceOp === 'append') return state
-    const source = event.data.source
-    if (source.kind !== 'user-edit') return state
-    const location = match.location
-    const carryingTurnStart = location.kind === 'turn' || location.kind === 'step'
-      ? location.turn.start?.seq
-      : undefined
+    const voided = voidedRangeForCopy(event, match.location)
+    if (voided === undefined) return state
     return {
       ...state,
       content: event.data.content,
       seq: event.seq,
       time: event.time,
-      source,
-      voidedRanges: [
-        ...state.voidedRanges ?? [],
-        voidedRangeForEdit(source.editedSeq, event.seq, carryingTurnStart),
-      ],
+      source: event.data.source,
+      voidedRanges: [...state.voidedRanges ?? [], voided],
     }
   },
   buildViewNode: (context) => {
