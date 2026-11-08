@@ -3,7 +3,8 @@
  * projection registry serves whole-log counts and wall times folded from step
  * boundaries, chunks, tool pairs, and assembled messages; compositions
  * without the registry are unaffected; unmounting the plugin removes the key
- * (HMR safety). The two counting regressions pinned here are the reasons the
+ * (HMR safety); a human-message edit supersedes a Turn, and that Turn's counted
+ * steps and wall time leave the figures with it. The two counting regressions pinned here are the reasons the
  * fold counts step boundaries instead of assistant messages: a cancelled step
  * never assembles a message but still counts, and a max-tokens usage-host
  * message (empty content) adds no extra step. Wall-time math runs against the
@@ -12,9 +13,9 @@
 
 import { describe, expect, it } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
-import { createMessage, ToolCallId } from '@deepseek-ai/dsh-llm'
+import { createMessage, createUserMessage, ToolCallId } from '@deepseek-ai/dsh-llm'
 import type { StreamChunk, TokenUsage } from '@deepseek-ai/dsh-llm'
-import SessionStore, { SessionId } from '@deepseek-ai/dsh-session'
+import SessionStore, { SessionId, SessionSeq } from '@deepseek-ai/dsh-session'
 import type { Session, SessionEvent } from '@deepseek-ai/dsh-session'
 import SessionProjectionRegistry from '@deepseek-ai/dsh-session-projection'
 import * as SessionStatsPlugin from '@deepseek-ai/dsh-session-stats'
@@ -47,6 +48,19 @@ function appendEmptyAssistantMessage(session: Session, turn: number, step: numbe
       source: { kind: 'model', provider: 'mock', model: 'mock' },
     }),
   }, { surfaceOp: 'append' })
+}
+
+/** One human prompt as the loop logs it. */
+function humanPrompt(text: string) {
+  return createUserMessage({ content: [{ type: 'text', text }], source: { kind: 'user' } })
+}
+
+/** The replacement copy an accepted edit appends for `editedSeq`. */
+function editedPrompt(text: string, editedSeq: SessionSeq) {
+  return createUserMessage({
+    content: [{ type: 'text', text }],
+    source: { kind: 'user-edit', editedSeq, editCount: 1 },
+  })
 }
 
 /** The all-zero projection value plus overrides, for exact fold expectations. */
@@ -134,6 +148,26 @@ describe('sessionStats projection unit (registry drive)', () => {
     await ctx.plugin(SessionStatsPlugin)
     expect(ctx.sessionProjections.snapshot(session).values.sessionStats)
       .toMatchObject({ turns: 1, steps: 2 })
+  })
+
+  it('drops the turns and seconds an edit supersedes', async () => {
+    // The unit rewinds: rewriting the prompt of a closed Turn removes that
+    // Turn's boundaries, so the figures describe the conversation still in force
+    // and stay on one footing with the token totals beside them.
+    const { ctx, session } = await harness(true)
+    session.append('turn/start', { turn: 1 })
+    const prompt = session.append('user/message', humanPrompt('first ask'), { surfaceOp: 'append' })
+    closeStep(session, 1, 1)
+    session.append('turn/end', { turn: 1, reason: { kind: 'completed' } })
+    session.append('turn/start', { turn: 2 })
+    session.append('user/message', editedPrompt('corrected ask', prompt.seq), {
+      surfaceOp: { op: 'replace', startSeq: prompt.seq, endSeq: prompt.seq },
+      sourceEventSeqs: [prompt.seq],
+    })
+    closeStep(session, 2, 1)
+    session.append('turn/end', { turn: 2, reason: { kind: 'completed' } })
+    expect(ctx.sessionProjections.snapshot(session).values.sessionStats)
+      .toMatchObject({ turns: 1, steps: 1 })
   })
 
   it('has no sessionStats key without the plugin, and drops it when the plugin unloads (HMR safety)', async () => {

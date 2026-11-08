@@ -106,10 +106,17 @@ export type ContextPressureState = z.infer<typeof contextPressureStateSchema>
  *
  * Each v2 Assistant settlement contributes the last usage sample embedded in
  * its stream. `llm/retry-started` closes the replacement slot so the retried
- * attempt adds to the total.
+ * attempt adds to the total. The unit rewinds: a human-message edit voids a
+ * branch, and only the attempts of the conversation still in force stay in the
+ * totals the client reads beside its turn and step counts. One edit range
+ * begins at a human prompt and ends at a Turn start, so it never splits a
+ * step's streamed sample from its settlement. Its fold is unchanged, so the
+ * stored version stays: the registry drops a rewound unit's cache row once the
+ * log records another edit.
  */
 export const tokenUsageProjectionDefinition = {
   key: 'tokenUsage',
+  rewindable: true,
   stateVersion: 2,
   stateSchema: tokenUsageStateSchema,
   init: () => ({ totals: zeroBuckets(), last: null }),

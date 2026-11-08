@@ -84,7 +84,9 @@ interface ProjectionDefinition<K extends string, S> {
    * not own — effective directory, permission preset, selected model, turn
    * numbering, titles, metering — and for any positional or sequence-dependent
    * fold. An accepted edit clears stale pending input with its own durable
-   * record, so excluding the inbox costs no correctness.
+   * record, so excluding the inbox costs no correctness. Counts, times, and
+   * billed totals a superseded branch contributed are meant to leave a
+   * rewound unit: they describe the conversation still in force.
    * @default false
    */
   rewindable?: boolean
