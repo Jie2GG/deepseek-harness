@@ -7,7 +7,7 @@ import type {
 } from '@deepseek-ai/dsh-attachment'
 import type { Branded } from '@deepseek-ai/dsh-brand'
 import type { LlmAttemptId, MessageId } from '@deepseek-ai/dsh-llm/brand'
-import type { LlmModelBadge, TextBlock } from '@deepseek-ai/dsh-llm'
+import type { ContentBlock, LlmModelBadge, TextBlock } from '@deepseek-ai/dsh-llm'
 import type { SessionId, SessionSeq, SessionSeqCursor } from '@deepseek-ai/dsh-session/types'
 import type { SessionProjectionMap, SessionProjectionSummaryExcluded, SessionProjectionSummaryValues } from '@deepseek-ai/dsh-session-projection/types'
 import type { Principal } from '@deepseek-ai/dsh-typert-protocol'
@@ -187,6 +187,8 @@ declare module '@deepseek-ai/dsh-typert-protocol' {
     'session/provider-credentials-unavailable': Record<string, never>
     'session/provider-models-unavailable': { readonly provider: string }
     'session/model-unavailable': { readonly provider: string; readonly model: string }
+    /** A message edit was refused; `code` states which edit rule rejected it. */
+    'session/edit-rejected': { readonly sessionId: SessionId; readonly targetSeq: number; readonly code: string }
     'session/conflict': {
       readonly sessionId: SessionId
       readonly requestedCwd: string
@@ -304,6 +306,29 @@ export interface SessionRenameRequest {
 export interface SessionRenameValue {
   readonly title: string
   readonly seq: number
+}
+
+/** Request rewriting one sent human message in place. */
+export interface SessionEditMessageRequest {
+  readonly sessionId: SessionId
+  /** Seq of the current surface node holding the message being rewritten. */
+  readonly targetSeq: number
+  /**
+   * Complete rewritten blocks: edited text plus any of the message's original
+   * attachments to keep. An edit rewrites a message the Host already admitted, so
+   * it never carries a new upload.
+   */
+  readonly content: readonly ContentBlock[]
+}
+
+/** Facts of one accepted message edit. */
+export interface SessionEditMessageValue {
+  /** Identity of the rewritten message, preserved across the edit. */
+  readonly messageId: MessageId
+  /** Current surface nodes the rewrite shadows, including the edited message. */
+  readonly shadowedNodeCount: number
+  /** Pending inbox items removed because they followed the rewritten message. */
+  readonly clearedQueueCount: number
 }
 
 /** Session fork request. */

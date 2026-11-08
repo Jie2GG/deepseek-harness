@@ -30,6 +30,7 @@ async function liveAgent(ctx: Context, rawId: string, initial: AgentStatus): Pro
     inject: () => {},
     cancel: (cause, options) => { cancels.push([cause, options]) },
     runMaintenance: task => task(new AbortController().signal),
+    editMessage: () => { throw new Error('unused stub Agent editMessage') },
     whenIdle: () => Promise.resolve(),
     cancels,
     setStatus: (next) => { status = next },

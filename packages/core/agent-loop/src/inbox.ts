@@ -22,7 +22,12 @@ export const inboxProjectionSchema = z.object({
   'next-step': z.array(z.custom<UserMessage>()).readonly(),
 }).readonly()
 
-/** Standard fold that reconstructs pending input and rejects invalid durable splice history. */
+/**
+ * Standard fold that reconstructs pending input and rejects invalid durable splice history.
+ * This unit does not rewind with a human-message edit: a splice records a position and a count,
+ * so skipping one splice while replaying its partner rejects the fold. "Agent.editMessage" removes
+ * stale pending input durably instead, and the driver claims the queued rewrite from the same list.
+ */
 export const inboxProjectionDefinition = {
   key: 'inbox',
   stateSchema: inboxProjectionSchema,

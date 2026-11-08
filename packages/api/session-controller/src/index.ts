@@ -42,6 +42,8 @@ import type {
   SessionControlFrame,
   SessionCreateRequest,
   SessionCreateValue,
+  SessionEditMessageRequest,
+  SessionEditMessageValue,
   SessionFollowFrame,
   SessionFollowRequest,
   SessionForkRequest,
@@ -436,6 +438,19 @@ export class SessionController extends TypertRemoteService {
   @Remote('rename')
   rename(request: SessionRenameRequest): Promise<SessionRenameValue> {
     return this.commands.rename(request)
+  }
+
+  /**
+   * Rewrite one sent human message, voiding the history after it, and ask again
+   * with the corrected text. The Session must be idle: an in-flight turn is
+   * stopped first.
+   * @param request - Session identity, target surface seq, and rewritten blocks.
+   * @returns the preserved message identity, shadowed node count, and cleared
+   *   pending-item count, or the `session/edit-rejected` business error.
+   */
+  @Remote('editMessage')
+  editMessage(request: SessionEditMessageRequest): Promise<SessionEditMessageValue> {
+    return this.commands.editMessage(request)
   }
 
   /**

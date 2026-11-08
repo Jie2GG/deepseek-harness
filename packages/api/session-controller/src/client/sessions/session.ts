@@ -6,7 +6,7 @@ import { randomUUID } from '@deepseek-ai/dsh-util-crypto'
 import type { FileAttachmentRef, ImageAttachmentRef } from '@deepseek-ai/dsh-attachment'
 import type { SubagentAddress } from '@deepseek-ai/dsh-subagent/client'
 import type { MessageId } from '@deepseek-ai/dsh-llm/brand'
-import type { UserMessage } from '@deepseek-ai/dsh-llm/types'
+import type { ContentBlock, UserMessage } from '@deepseek-ai/dsh-llm/types'
 import { SessionLogOffset, SessionSeq, type SessionId } from '@deepseek-ai/dsh-session/types'
 import { SessionEventStream } from '../transport.ts'
 import type { SessionJournalChange } from '../transport.ts'
@@ -370,6 +370,26 @@ export class Session implements SessionFace {
       this.promptError = { op: 'stop', error: result.error }
       this.notifier.markDirty()
     }
+    return result
+  }
+
+  /**
+   * Edit: contract session.editMessage 1:1. The Host commits the rewrite and the
+   * rewritten message re-enters through ordinary inbox admission, so history,
+   * projections, and the Chat transcript follow from the durable events rather
+   * than from this response.
+   * @param input - surface seq of the sent human message and its rewritten blocks.
+   * @returns the accepted edit's facts, or the `session/edit-rejected` business error.
+   */
+  async editMessage(input: {
+    targetSeq: SessionSeq
+    content: readonly ContentBlock[]
+  }): Promise<RemoteResult<{ messageId: MessageId; shadowedNodeCount: number; clearedQueueCount: number }>> {
+    const result = await this.remote.session.editMessage({
+      sessionId: this.sessionId,
+      targetSeq: input.targetSeq,
+      content: input.content,
+    })
     return result
   }
 

@@ -60,6 +60,8 @@ When an Assistant attempt retires without a visible message, Chat hides its alre
 
 Text and reasoning contribute to Assistant visibility only when they contain a non-whitespace character. Streaming appends reuse each block's visibility; block replacement and finalized messages recalculate it while preserving the original text.
 
+A human-message edit also voids presentation: every Node whose event lies between the edited prompt and the Turn carrying its replacement copy leaves the transcript, including that Turn's process control and closing row, while the rewrite keeps the original prompt's place. Rewriting a rewritten prompt keeps every range its earlier copies voided, so each superseded branch stays out of the transcript. A compaction summary shadows history for the model only — the turns it replaced stay readable here, because the person saw them and the model answered them.
+
 <a id="command-and-failure-rows"></a>
 ## Command and failure rows
 
@@ -91,7 +93,7 @@ Preference menus restore focus to their trigger without scrolling before publish
 
 Artifact extensions can subscribe to one Turn and Node kind through `ChatNodeStore.turnDataSource`. The source includes hidden Nodes and exposes their business data in anchor order. Membership updates incrementally; only observed collections materialize ordered arrays, and unrelated Turns or kinds do not notify them.
 
-The completed-turn action footer follows the recorded Turn end. Its action row starts 20px below preceding prose or extension content. Actions remain visible only on the latest Turn when its final visible content is a reply; other endings and historical Turns reveal actions on hover or keyboard focus. Devices without hover keep actions visible. An unavailable branch action opens its explanation on click or tap without creating a branch.
+The completed-turn action footer follows the recorded Turn end. Its action row starts 20px below preceding prose or extension content. Actions remain visible only on the latest Turn when its final visible content is a reply; other endings and historical Turns reveal actions on hover or keyboard focus. Devices without hover keep actions visible. An unavailable branch action opens its explanation on click or tap without creating a branch. A closed Turn's own human prompt also offers an edit action: it opens an inline editor in the bubble, keeps that prompt's attachments, and sending rewrites the durable history and re-asks. When the accepted rewrite removed follow-ups that were still queued behind that prompt, the bubble reports how many it cleared, because those messages leave the transcript with the discarded history. The action is absent while the Turn is open, because work the running Turn already did outside the log cannot be recalled.
 
 -----
 
@@ -213,7 +215,7 @@ None; Chat presentation does not assemble or mutate provider requests.
 
 - **Opening echoes predict local order** — several submissions made before the running update can all remain in Chat. Their initial order follows local submission order, not Host queue order; admission can reposition them when the Host receives requests in a different order.
 
-- **The transcript reflects the loaded Session window** — older transcript nodes become available only after Session Controller loads the preceding event page. Turn navigation is wider than the window: the rail merges the loaded Turns with the host `turnOutline` projection, so every started Turn gets a fixed-pitch mark (10px apart; a ladder taller than the frame scrolls inside it with gradient fades), and activating an unloaded mark pages history through the Turn's `turn/start` seq before landing on its row. Without the projection (assemblies not mounting `dsh-session-turn-outline`) the rail falls back to loaded Turns only.
+- **The transcript reflects the loaded Session window** — older transcript nodes become available only after Session Controller loads the preceding event page. Turn navigation is wider than the window: the rail merges the loaded Turns with the host `turnOutline` projection, so every Turn that still stands gets a fixed-pitch mark (10px apart; a ladder taller than the frame scrolls inside it with gradient fades), numbered by its place in that standing order rather than by the host's logged turn number, and activating an unloaded mark pages history through the Turn's `turn/start` seq before landing on its row. Without the projection (assemblies not mounting `dsh-session-turn-outline`) the rail falls back to loaded Turns only.
 - **Rail previews are card-sized** — one prompt line (50 characters) and up to three response lines (120), on loaded and unloaded Turns alike; an unloaded Turn's response arrives from the outline only once the Turn settled, so an open Turn previews its prompt (or just the Turn number) until then.
 
 

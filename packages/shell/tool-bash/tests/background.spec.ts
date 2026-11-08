@@ -374,6 +374,7 @@ describe('foreground commands as jobs', () => {
       inject: () => {},
       cancel: () => {},
       runMaintenance: task => task(new AbortController().signal),
+      editMessage: () => { throw new Error('unused stub Agent editMessage') },
       whenIdle: () => Promise.resolve(),
     }
     ctx.agents.register(owner)
@@ -491,6 +492,7 @@ describe('owned background output', () => {
       inject: () => {},
       cancel: () => {},
       runMaintenance: task => task(new AbortController().signal),
+      editMessage: () => { throw new Error('unused stub Agent editMessage') },
       whenIdle: () => Promise.resolve(),
     }
     ctx.agents.register(owner)

@@ -13,7 +13,7 @@ import { Context } from '@deepseek-ai/cordis'
 import AgentRegistry from '@deepseek-ai/dsh-agent'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
-import SessionStore from '@deepseek-ai/dsh-session'
+import SessionStore, { SessionSeq } from '@deepseek-ai/dsh-session'
 import type { Session } from '@deepseek-ai/dsh-session'
 import type { TodoItem } from '@deepseek-ai/dsh-tool-todo'
 import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
@@ -114,5 +114,29 @@ describe('todos projection provider', () => {
     expect((await bench.tailProjections())?.values.todos).toBeNull()
     await fiber.dispose()
     expect('todos' in ((await bench.tailProjections())?.values ?? {})).toBe(false)
+  })
+
+  it('rewinds the list when a human-message edit voids the turn that wrote it', async () => {
+    const bench = await harness(true)
+    const session = bench.session
+    const written: TodoItem[] = [{ content: 'discarded plan', status: 'pending' }]
+    const rewritten: TodoItem[] = [{ content: 'new plan', status: 'in_progress' }]
+    seedMessage(session)                       // seq 0: the prompt a later edit rewrites
+    session.append('turn/start', { turn: 1 })  // seq 1
+    session.append('todo/write', { todos: written })     // seq 2: inside the edit's voided range
+    session.append('turn/end', { turn: 1, reason: { kind: 'completed' } })
+    session.append('turn/start', { turn: 2 })
+    session.append('user/message', createUserMessage({
+      content: [{ type: 'text', text: 'corrected ask' }],
+      source: { kind: 'user-edit', editedSeq: SessionSeq(0), editCount: 1 },
+    }), {
+      surfaceOp: { op: 'replace', startSeq: SessionSeq(0), endSeq: SessionSeq(0) },
+      sourceEventSeqs: [SessionSeq(0)],
+    })
+    // The rewrite did not happen yet as far as projected state is concerned, so
+    // neither may the list the discarded turn recorded.
+    expect((await bench.tailProjections())?.values.todos).toBeNull()
+    session.append('todo/write', { todos: rewritten })
+    expect((await bench.tailProjections())?.values.todos).toEqual(rewritten)
   })
 })

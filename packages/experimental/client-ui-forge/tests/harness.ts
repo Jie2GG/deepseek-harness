@@ -389,6 +389,7 @@ export function testAgent(ctx: Context, session: Session): TestAgent {
       if (cause.kind === 'disposed') maintenance.disposed = true
       maintenance.abort.abort(cause)
     },
+    editMessage: () => { throw new Error('unused stub Agent editMessage') },
     async whenIdle() {
       while (maintenance !== undefined) await maintenance.done
     },

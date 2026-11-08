@@ -71,6 +71,9 @@ const selectionSchema = z.object({
  */
 export const modelSelectionProjectionDefinition: Required<ProjectionDefinition<'modelSelection', ModelSelectionProjectionState>> = {
   key: 'modelSelection',
+  // A model choice is the operator's setting, not a product of the sentences in
+  // the transcript: rewriting an earlier message keeps the route still selected.
+  rewindable: false,
   stateVersion: 3,
   stateSchema: z.object({ lastUsed: selectionSchema, pending: selectionSchema }),
   init: () => ({ lastUsed: null, pending: null }),

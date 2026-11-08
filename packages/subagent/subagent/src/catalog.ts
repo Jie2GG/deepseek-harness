@@ -129,6 +129,7 @@ function subagentCatalogEntries(state: SubagentCatalogState): SubagentCatalogEnt
 /** Parent-owned catalog; version-6 checkpoints retain unnamed facts, and invalid own facts reject restoration. */
 export const subagentCatalogProjectionDefinition = {
   key: 'subagentCatalog',
+  rewindable: true,
   stateSchema,
   init: (_header: SessionHeader, inheritedEventCount: SessionLogOffset) => ({ inheritedEventCount }),
   apply: (state, event: SessionEvent) => {

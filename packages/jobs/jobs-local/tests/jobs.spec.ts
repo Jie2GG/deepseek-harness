@@ -59,6 +59,7 @@ function stubAgent(ctx: Context, rawId: string, presetScope?: ScopeKey): Agent {
     inject: () => {},
     cancel() {},
     runMaintenance: <T>(job: (signal: AbortSignal) => Promise<T>) => job(new AbortController().signal),
+    editMessage: () => { throw new Error('unused stub Agent editMessage') },
     whenIdle() { return Promise.resolve() },
   } satisfies Agent
   agentScopeDisposers.set(agent, async () => { await scopeFiber.dispose() })

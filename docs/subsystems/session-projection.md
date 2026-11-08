@@ -73,6 +73,23 @@ interface ProjectionDefinition<K extends string, S> {
    * @returns the next state (same reference when the event is not the unit's).
    */
   apply(state: NoInfer<S>, event: SessionEvent): NoInfer<S>
+  /**
+   * Whether a human-message edit rewinds this unit. When true, events inside an
+   * edit's voided range contribute nothing to the value: the unit's state equals
+   * what the log folded to immediately before the rewritten message, then
+   * replays forward from the edit. Only a unit whose events each carry complete
+   * post-change state may set true; a record that names a position and a count
+   * (the pending inbox splice) is split from its partner by the range boundary
+   * and would reject the replay. Leave false for settings the conversation does
+   * not own — effective directory, permission preset, selected model, turn
+   * numbering, titles, metering — and for any positional or sequence-dependent
+   * fold. An accepted edit clears stale pending input with its own durable
+   * record, so excluding the inbox costs no correctness. Counts, times, and
+   * billed totals a superseded branch contributed are meant to leave a
+   * rewound unit: they describe the conversation still in force.
+   * @default false
+   */
+  rewindable?: boolean
   /** Client view. Omit for host-only units. */
   wire?: K extends keyof SessionProjectionMap ? {
     /** Validates the wire payload before it leaves the host. */

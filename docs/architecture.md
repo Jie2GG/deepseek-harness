@@ -92,7 +92,8 @@ turn/start
      step/start
      agent/request -> prepareCall (cancellation commits neither system nor users)
      reconcile system/message using the prepared call capability
-     append entered messages as user/message; reconcile retained runtime context
+     append entered messages as user/message (a queued human-message edit replaces
+       its range instead of appending); reconcile retained runtime context
      log request/header and request/context as needed
      derive and freeze model history from the log
      stream the bound prepared call -> llm/stream -> agent/assistant-stream start

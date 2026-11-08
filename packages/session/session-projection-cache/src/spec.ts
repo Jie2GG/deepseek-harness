@@ -22,15 +22,23 @@ import { defineDomain, domainTable } from '@deepseek-ai/dsh-storage-domain'
  * minus the two record keys). `val` is the unit's internal state — plain
  * JSON by the unit contract. Validation uses the same lossless JSON rules as
  * writes and preserves every state key without cloning. A row is never wrong,
- * only possibly stale: `seq` says exactly how stale, and a `ver` mismatch
- * against the live unit's `stateVersion`
- * discards it at read time (never a migration).
+ * only possibly stale: `seq` says exactly how stale, a `ver` mismatch against
+ * the live unit's `stateVersion` discards it at read time (never a migration), and a
+ * rewound unit's `edits` stamp discards it when the log gained a human-message
+ * edit after the row was folded.
  */
 export const checkpointRow = z.object({
   ver: z.number().int().nonnegative(),
   seq: z.number().int().gte(-1).transform((value): SessionSeqCursor =>
     value === -1 ? -1 : SessionSeq(value)),
   val: z.custom<JsonValue>(isJsonValue, { message: 'checkpoint state must be losslessly JSON-serializable' }),
+  /**
+   * Human-message edits the row folded through, present only on a unit that
+   * rewinds and only once an edit exists. A row whose stamp trails the stored
+   * log still counts history a later edit voided, so `restore` discards it and
+   * refolds instead of replaying that prefix.
+   */
+  edits: z.number().int().nonnegative().optional(),
 })
 
 /**

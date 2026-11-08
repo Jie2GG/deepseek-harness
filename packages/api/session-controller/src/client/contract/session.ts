@@ -9,6 +9,7 @@
  */
 import type { FileAttachmentRef, ImageAttachmentRef } from '@deepseek-ai/dsh-attachment'
 import type { MessageId } from '@deepseek-ai/dsh-llm/brand'
+import type { ContentBlock } from '@deepseek-ai/dsh-llm/types'
 import type { SessionId, SessionSeq } from '@deepseek-ai/dsh-session/types'
 import type { RemoteResult } from '@deepseek-ai/dsh-typert-protocol'
 import type { ObservableSnapshot } from '@deepseek-ai/dsh-client-store'
@@ -129,6 +130,24 @@ export interface ISession {
    * @returns the normalized accepted title and its event seq, or the business error.
    */
   rename(title: string): Promise<RemoteResult<{ title: string; seq: SessionSeq }>>
+  /**
+   * Rewrite one sent human message and ask again with the corrected text. The
+   * rewrite shadows the edited message and everything after it, so model history
+   * and every rewound projection continue from before it; the Session's settings
+   * keep their current values. Requires an idle Session — stop the running turn
+   * first, with {@link cancel} or after the answer settles.
+   * @param input - surface seq of the message and its complete rewritten blocks.
+   * @returns the preserved message identity, the shadowed node count, and the count
+   *   of pending queued items removed, or the `session/edit-rejected` business error.
+   */
+  editMessage(input: {
+    targetSeq: SessionSeq
+    content: readonly ContentBlock[]
+  }): Promise<RemoteResult<{
+    messageId: MessageId
+    shadowedNodeCount: number
+    clearedQueueCount: number
+  }>>
   /**
    * Extend history by at least 50 messages and two Turn starts, including a
    * partial Turn at the window's beginning. Stop at 500 messages or history

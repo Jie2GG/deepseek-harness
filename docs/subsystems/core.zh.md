@@ -144,6 +144,24 @@ interface Agent {
    * @param message - identified injected context and the source that supplied it.
    */
   inject(message: UserMessage): void
+
+  /**
+   * Rewrite one sent human message and ask again with the corrected text.
+   * The rewrite shadows the edited message and every later surface node, so model
+   * history and every rewound projection continue from before it while the log
+   * keeps the discarded turns readable by position. Pending inbox items that
+   * followed the edited message are removed and reported; the Session's settings —
+   * directory, permission preset, model, turn numbering, title — do not rewind.
+   * Requires an idle Agent: a running turn is cancelled first, by the caller or by
+   * the person using the Session.
+   * @param request - target surface seq and the rewritten content.
+   * @returns the preserved message identity, the shadowed node count, and how many
+   *   pending items the edit removed.
+   * @throws {MessageEditError} with `MESSAGE_EDIT_TURN_RUNNING`,
+   *   `MESSAGE_EDIT_TARGET_NOT_ON_SURFACE`, `MESSAGE_EDIT_TARGET_NOT_USER`, or
+   *   `MESSAGE_EDIT_CONTENT_EMPTY`.
+   */
+  editMessage(request: MessageEditRequest): MessageEditResult
 }
 ```
 

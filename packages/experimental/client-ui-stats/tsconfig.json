@@ -22,6 +22,7 @@
     { "path": "../../llm/llm-retry" },
     { "path": "../../interaction/user-approval" },
     { "path": "../../llm/token-meter" },
-    { "path": "../../session/session-stats" }
+    { "path": "../../session/session-stats" },
+    { "path": "../../session/session-turn-outline" }
   ]
 }

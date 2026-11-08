@@ -91,6 +91,7 @@ export class ApiSessionList {
   async initialize(): Promise<void> {
     this.listMetadata = await this.ctx.sessionProjections.register<'sessionListMetadata', SessionListMetadata>({
       key: 'sessionListMetadata',
+      rewindable: true,
       stateSchema: sessionListMetadataSchema,
       init: () => ({ blank: true, lastPromptAt: null }),
       apply: applySessionListMetadata,

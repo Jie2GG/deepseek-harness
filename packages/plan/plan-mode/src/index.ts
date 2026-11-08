@@ -134,6 +134,7 @@ const planProjectionSchema: ZodType<PlanProjection> = zod.object({
 /** Projection of logged plan selections and committed mode. */
 export const planProjectionDefinition = {
   key: 'plan',
+  rewindable: true,
   stateVersion: 4,
   stateSchema: planUnitStateSchema,
   init: () => ({ active: false, wanted: null, running: null, activeAtLastHeader: null, entered: false }),

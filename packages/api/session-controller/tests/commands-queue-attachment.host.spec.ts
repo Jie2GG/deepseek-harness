@@ -88,6 +88,7 @@ async function commandHarness(
   const agent = {
     id: session.id,
     options: { provider: 'fixture', model: 'fixture-model' },
+    editMessage: () => { throw new Error('unused stub Agent editMessage') },
     whenIdle: vi.fn(() => Promise.resolve()),
     runMaintenance: async () => { throw new Error('unexpected maintenance') },
     send: vi.fn(),

@@ -113,6 +113,42 @@ describe('tokenUsage session projection', () => {
     expect(projected(ctx, session)).toEqual(ZERO)
   })
 
+  it('drops the attempts of a turn an edit supersedes', async () => {
+    // The unit rewinds alongside the turn and step counts. An edit range opens
+    // at a human prompt and closes at a Turn start, so every streamed sample
+    // and settlement of a voided step leaves together rather than half-counting.
+    const { ctx, session } = await harness()
+    const superseded = { inputTokens: 10, outputTokens: 4, cacheReadTokens: 7, cacheWriteTokens: 2 }
+    const current = { inputTokens: 5, outputTokens: 2, cacheReadTokens: 3, cacheWriteTokens: 0 }
+    session.append('turn/start', { turn: 1 })
+    const prompt = session.append('user/message', createUserMessage({
+      content: [{ type: 'text', text: 'first ask' }],
+      source: { kind: 'user' },
+    }), { surfaceOp: 'append' })
+    startStep(session, 1, 1)
+    usageChunk(session, superseded, 1, 1)
+    finalUsage(session, superseded, 1, 1)
+    session.append('turn/end', { turn: 1, reason: { kind: 'completed' } })
+    expect(projected(ctx, session)).toEqual({
+      uncachedInputTokens: 10, outputTokens: 4, cacheReadTokens: 7, cacheWriteTokens: 2,
+    })
+    session.append('turn/start', { turn: 2 })
+    const tail = session.surface.nodes.at(-1) ?? prompt.seq
+    session.append('user/message', createUserMessage({
+      content: [{ type: 'text', text: 'corrected ask' }],
+      source: { kind: 'user-edit', editedSeq: prompt.seq, editCount: 1 },
+    }), {
+      surfaceOp: { op: 'replace', startSeq: prompt.seq, endSeq: tail },
+      sourceEventSeqs: [prompt.seq, tail],
+    })
+    startStep(session, 2, 1)
+    usageChunk(session, current, 2, 1)
+    finalUsage(session, current, 2, 1)
+    expect(projected(ctx, session)).toEqual({
+      uncachedInputTokens: 5, outputTokens: 2, cacheReadTokens: 3, cacheWriteTokens: 0,
+    })
+  })
+
   it('does not count a usage chunk and identical final usage twice', async () => {
     const { ctx, session } = await harness()
     const changes: unknown[] = []

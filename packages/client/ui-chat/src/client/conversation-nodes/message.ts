@@ -3,20 +3,32 @@ import type {
   ContextMessageNode, ConversationContextReader, ConversationLocation, ConversationNodeDefinition,
   SteeringMessageNode, UserMessageNode,
 } from '@deepseek-ai/dsh-client-ui-conversation/client'
+import type { SessionEvent } from '@deepseek-ai/dsh-session'
 import { isAppendSurfaceEvent, isReplacementSurfaceEvent } from '@deepseek-ai/dsh-session/surface'
+import type { MessageEditVoidRange } from '../contract/chat-nodes.ts'
 import type { InboxState } from './inbox.ts'
 import type { ProcessEvidenceState } from './turn-process.ts'
 import { chatNode, contextLocation } from './common.ts'
 import { contextForm, contextProducer } from './event-projection.ts'
 
-interface ReferencedUserMessageNode extends UserMessageNode {
+/** Log-seq ranges superseded by every rewrite of the human message a row carries. */
+interface RewrittenMessageFields {
+  /**
+   * One range per rewrite that adopted this row, oldest first. `seq` and `source`
+   * describe only the newest copy, so the ranges voided by earlier copies live
+   * here and keep that superseded history out of the transcript.
+   */
+  readonly voidedRanges?: readonly MessageEditVoidRange[]
+}
+
+interface ReferencedUserMessageNode extends UserMessageNode, RewrittenMessageFields {
   /** Labels cited by the immediately following session-reference context. */
   readonly referenceLabels?: readonly string[]
   /** Skill names the same step's `skill-invocation` injections loaded. */
   readonly skillNames?: readonly string[]
 }
 
-interface ReferencedSteeringMessageNode extends SteeringMessageNode {
+interface ReferencedSteeringMessageNode extends SteeringMessageNode, RewrittenMessageFields {
   /** Labels cited by the immediately following session-reference context. */
   readonly referenceLabels?: readonly string[]
   /** Skill names the same step's `skill-invocation` injections loaded. */
@@ -78,13 +90,40 @@ function followsProcessEvidence(location: ConversationLocation, reader: Conversa
   return reader.previous<ProcessEvidenceState>('process-evidence')?.state.turn === location.turn.turn
 }
 
+/**
+ * Half-open log-seq range one replacement copy supersedes, in the same form the
+ * session surface records: the edited prompt through the history before the Turn
+ * carrying the copy, whose boundary events stay current work. Pagination can
+ * load a window that opens on a later copy, so every copy carries its own range
+ * instead of waiting for an update that never arrives.
+ * @param event - the `user/message` event starting or updating the row.
+ * @param location - that event's Location, whose Turn start bounds the range.
+ * @returns the superseded range, or undefined for an ordinary human prompt.
+ */
+function voidedRangeForCopy(
+  event: SessionEvent<'user/message'>,
+  location: ConversationLocation,
+): MessageEditVoidRange | undefined {
+  const source = event.data.source
+  if (source.kind !== 'user-edit') return undefined
+  const carryingTurnStart = location.kind === 'turn' || location.kind === 'step'
+    ? location.turn.start?.seq
+    : undefined
+  const carriesTurn = carryingTurnStart !== undefined
+    && carryingTurnStart > source.editedSeq && carryingTurnStart < event.seq
+  return { start: source.editedSeq, end: carriesTurn ? carryingTurnStart : event.seq }
+}
+
 /** User, steering, and injected-context message classification Definition. */
 export const messageDefinition: ConversationNodeDefinition<MessageNode> = {
   kind: 'input-message',
   target: 'chat',
   match: (event) => {
     if (event.type === 'user/message') {
-      return isAppendSurfaceEvent(event) && !isCompactionCheckpoint(event)
+      // A human-message edit is a replacement copy: it owns the edited message's
+      // identity, so Chat shows the rewritten text in that message's place.
+      const rewritten = event.surfaceOp !== 'append' && event.data.source.kind === 'user-edit'
+      return (isAppendSurfaceEvent(event) || rewritten) && !isCompactionCheckpoint(event)
         ? { id: String(event.data.id), role: 'start' }
         : null
     }
@@ -93,7 +132,7 @@ export const messageDefinition: ConversationNodeDefinition<MessageNode> = {
   start: (_context, match, reader) => {
     const event = match.event
     if (event.type !== 'user/message') throw new Error('input-message start requires user/message')
-    if (event.data.source.kind !== 'user') {
+    if (event.data.source.kind !== 'user' && event.data.source.kind !== 'user-edit') {
       const nextTurn = reader.previous<InboxState>('inbox-next-turn')?.state
       const nextStep = reader.previous<InboxState>('inbox-next-step')?.state
       const location = match.location
@@ -112,6 +151,7 @@ export const messageDefinition: ConversationNodeDefinition<MessageNode> = {
     }
     const id = String(event.data.id)
     const claim = reader.previous<InboxState>('inbox-next-step')?.state
+    const voided = voidedRangeForCopy(event, match.location)
     return claim?.currentClaimed.has(id) === true
       ? {
         kind: 'steering',
@@ -120,6 +160,7 @@ export const messageDefinition: ConversationNodeDefinition<MessageNode> = {
         time: event.time,
         content: event.data.content,
         source: event.data.source,
+        ...(voided === undefined ? {} : { voidedRanges: [voided] }),
         ...claim.firstClaimedHuman === id && followsProcessEvidence(match.location, reader)
           ? { batchStart: true }
           : {},
@@ -131,9 +172,28 @@ export const messageDefinition: ConversationNodeDefinition<MessageNode> = {
         time: event.time,
         content: event.data.content,
         source: event.data.source,
+        ...(voided === undefined ? {} : { voidedRanges: [voided] }),
       }
   },
-  update: context => context.state,
+  update: (context, match) => {
+    const state = context.state
+    const event = match.event
+    // A rewrite of a sent prompt adopts the replacement copy: the message keeps
+    // its identity and transcript position while its text, source, and event
+    // position become the copy's.
+    if (state.kind !== 'user' && state.kind !== 'steering') return state
+    if (event.type !== 'user/message' || event.surfaceOp === 'append') return state
+    const voided = voidedRangeForCopy(event, match.location)
+    if (voided === undefined) return state
+    return {
+      ...state,
+      content: event.data.content,
+      seq: event.seq,
+      time: event.time,
+      source: event.data.source,
+      voidedRanges: [...state.voidedRanges ?? [], voided],
+    }
+  },
   buildViewNode: (context) => {
     if (context.state === undefined) return null
     const location = contextLocation(context)

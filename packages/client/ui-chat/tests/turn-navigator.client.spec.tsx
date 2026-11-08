@@ -18,6 +18,9 @@ afterEach(() => {
 
 const items: readonly TurnRailItem[] = Array.from({ length: 1_000 }, (_, index) => ({
   turn: index + 1,
+  // The last mark stands without an outline number, so its label falls back to
+  // the logged turn; every other mark shows the position it holds in both.
+  ordinal: index === 999 ? null : index + 1,
   prompt: `prompt ${String(index + 1)}`,
   response: '',
   anchor: { kind: 'loaded', key: `turn:${String(index + 1)}` },
@@ -118,6 +121,21 @@ describe('TurnNavigator', () => {
     await act(async () => { view.rerender(<TurnNavigator {...props} activeTurn={50} />) })
     expect(scroller.scrollTop).toBe(352)
     expect(scrollTo).toHaveBeenCalledWith(expect.objectContaining({ top: 352 }))
+  })
+
+  it('numbers a mark by its place among the turns that still stand', async () => {
+    installTurnNavigatorObserver()
+    const standing: readonly TurnRailItem[] = [
+      { turn: 41, ordinal: 1, prompt: 'kept one', response: '', anchor: { kind: 'loaded', key: 'turn:41' } },
+      { turn: 900, ordinal: 2, prompt: 'kept two', response: '', anchor: { kind: 'loaded', key: 'turn:900' } },
+    ]
+    const view = render(
+      <TurnNavigator items={standing} activeTurn={41} busyTurn={null} onNavigate={vi.fn()} t={t} />,
+    )
+    // Turns an edit voided leave the outline, so the rail numbers what remains
+    // from one rather than repeating the host's logged numbers with gaps.
+    expect(await view.findByRole('button', { name: '跳转到第 1 轮' })).toBeTruthy()
+    expect(view.getByRole('button', { name: '跳转到第 2 轮' })).toBeTruthy()
   })
 
   it('does not let scroll-induced pointer entry replace a hover or focused preview', async () => {

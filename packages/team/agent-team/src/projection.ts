@@ -209,6 +209,7 @@ export function teamProjectionView(state: TeamProjectionState): TeamProjection {
  */
 export const teamProjectionDefinition = {
   key: 'agentTeam',
+  rewindable: true,
   stateVersion: 7,
   stateSchema: teamProjectionEntrySchema,
   init: (header, inheritedEventCount: SessionLogOffset) => emptyTeamState(header.id, inheritedEventCount),

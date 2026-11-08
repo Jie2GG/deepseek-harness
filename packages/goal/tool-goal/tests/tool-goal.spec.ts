@@ -86,6 +86,7 @@ function stubAgent(rawId: string, supplied?: Session, suppliedCtx?: Context): St
     },
     cancel() {},
     runMaintenance: task => task(new AbortController().signal),
+    editMessage: () => { throw new Error('unused stub Agent editMessage') },
     whenIdle() { return Promise.resolve() },
   }
   return { agent, session, inbox, setStatus(value) { status = value } }

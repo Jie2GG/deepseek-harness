@@ -68,6 +68,7 @@
     "react-dom": "^18.2.0",
     "@deepseek-ai/dsh-compaction": "workspace:*",
     "@deepseek-ai/dsh-session-stats": "workspace:*",
+    "@deepseek-ai/dsh-session-turn-outline": "workspace:*",
     "@deepseek-ai/dsh-token-meter": "workspace:*",
     "@deepseek-ai/dsh-user-approval": "workspace:*"
   },

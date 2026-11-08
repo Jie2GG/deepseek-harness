@@ -8,7 +8,7 @@ import type {} from '@deepseek-ai/dsh-api-remotes/client'
 import type { SessionBinding } from '@deepseek-ai/dsh-api-session-controller/client'
 import type { GroupKey } from '@deepseek-ai/dsh-client-ui-conversation/client'
 import { createSnapshotStore, type ObservableSnapshot } from '@deepseek-ai/dsh-client-store'
-import type { SessionId } from '@deepseek-ai/dsh-session/types'
+import { SessionId, SessionSeq } from '@deepseek-ai/dsh-session/types'
 import type {} from '@deepseek-ai/dsh-client-ui-sidebar-right/client'
 import type {} from '@deepseek-ai/dsh-client-ui-sidebar-browser/client'
 import type {} from '@deepseek-ai/dsh-client-ui-input-trigger/client'
@@ -308,6 +308,12 @@ export function apply(ctx: Context): void {
               .catch(() => {
                 // Fork or child-title failure leaves the source view unchanged.
               })
+          },
+          editAt: async (seq, content) => {
+            const result = await session.editMessage({ targetSeq: SessionSeq(seq), content })
+            return result.ok
+              ? { refusal: null, cleared: result.value.clearedQueueCount }
+              : { refusal: result.error.message, cleared: 0 }
           },
         }
       },

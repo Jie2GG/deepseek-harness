@@ -2812,6 +2812,12 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         returns: 'the accepted title and durable event sequence.',
       },
       {
+        signature: '@Remote(\'editMessage\') editMessage(request: SessionEditMessageRequest): Promise<SessionEditMessageValue>',
+        description: 'Rewrite one sent human message, voiding the history after it, and ask again with the corrected text. The Session must be idle: an in-flight turn is stopped first.',
+        parameters: [{ name: 'request', description: 'Session identity, target surface seq, and rewritten blocks.' }],
+        returns: 'the preserved message identity, shadowed node count, and cleared pending-item count, or the `session/edit-rejected` business error.',
+      },
+      {
         signature: '@Remote(\'fork\') async fork(request: SessionForkRequest): Promise<SessionForkValue>',
         description: 'Fork one cold-readable exact event prefix into a new Session. An omitted boundary selects the latest completed-turn prefix; an open cut receives synthetic fork closers.',
         parameters: [{ name: 'request', description: 'source Session, optional exact inclusive event boundary, and migration preflight choice.' }],
@@ -7358,6 +7364,10 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export type Message = MessageRoleMap[keyof MessageRoleMap];',
   },
   {
+    name: 'MessageEditWindow',
+    declaration: 'export interface MessageEditWindow {\n    readonly editSeq: SessionSeq;\n    readonly editedSeq: SessionSeq;\n    readonly startSeq: SessionSeq;\n    readonly endSeqExclusive: SessionSeq;\n}',
+  },
+  {
     name: 'MessageFeedbackDeleteRequest',
     declaration: 'export interface MessageFeedbackDeleteRequest {\n    readonly sessionId: SessionId;\n    readonly messageId: MessageId;\n    readonly ifVersion: MessageFeedbackVersion;\n}',
   },
@@ -7839,11 +7849,11 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'ProjectionCheckpointRow',
-    declaration: 'export interface ProjectionCheckpointRow {\n    ver: number;\n    seq: SessionSeqCursor;\n    val: unknown;\n}',
+    declaration: 'export interface ProjectionCheckpointRow {\n    ver: number;\n    seq: SessionSeqCursor;\n    val: unknown;\n    edits?: number | undefined;\n}',
   },
   {
     name: 'ProjectionDefinition',
-    declaration: 'export interface ProjectionDefinition<K extends string, S> {\n    key: K;\n    stateSchema: ZodType<S>;\n    init(header: SessionHeader, inheritedEventCount: SessionLogOffset): NoInfer<S>;\n    apply(state: NoInfer<S>, event: SessionEvent): NoInfer<S>;\n    wire?: K extends keyof SessionProjectionMap ? {\n        viewSchema: ZodType<SessionProjectionViewValue<SessionProjectionMap[K]>>;\n        view(state: NoInfer<S>): SessionProjectionViewValue<SessionProjectionMap[K]>;\n        summary?: boolean;\n    } : never;\n    stateVersion: number;\n}',
+    declaration: 'export interface ProjectionDefinition<K extends string, S> {\n    key: K;\n    stateSchema: ZodType<S>;\n    init(header: SessionHeader, inheritedEventCount: SessionLogOffset): NoInfer<S>;\n    apply(state: NoInfer<S>, event: SessionEvent): NoInfer<S>;\n    rewindable?: boolean;\n    wire?: K extends keyof SessionProjectionMap ? {\n        viewSchema: ZodType<SessionProjectionViewValue<SessionProjectionMap[K]>>;\n        view(state: NoInfer<S>): SessionProjectionViewValue<SessionProjectionMap[K]>;\n        summary?: boolean;\n    } : never;\n    stateVersion: number;\n}',
   },
   {
     name: 'ProjectionEventChangeListener',
@@ -8482,6 +8492,14 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export interface SessionDeletedNotice {\n    readonly sessionId: SessionId;\n}',
   },
   {
+    name: 'SessionEditMessageRequest',
+    declaration: 'export interface SessionEditMessageRequest {\n    readonly sessionId: SessionId;\n    readonly targetSeq: number;\n    readonly content: readonly ContentBlock[];\n}',
+  },
+  {
+    name: 'SessionEditMessageValue',
+    declaration: 'export interface SessionEditMessageValue {\n    readonly messageId: MessageId;\n    readonly shadowedNodeCount: number;\n    readonly clearedQueueCount: number;\n}',
+  },
+  {
     name: 'SessionEndInput',
     declaration: 'export interface SessionEndInput {\n    reason: \'clear\' | \'logout\' | \'prompt_input_exit\' | \'resume\' | \'other\';\n    sessionId: string;\n}',
   },
@@ -8943,7 +8961,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'SessionSurface',
-    declaration: 'export interface SessionSurface {\n    readonly nodes: readonly SessionSeq[];\n    readonly replaceGeneration: number;\n    readonly contentGeneration: number;\n}',
+    declaration: 'export interface SessionSurface {\n    readonly nodes: readonly SessionSeq[];\n    readonly replaceGeneration: number;\n    readonly contentGeneration: number;\n    readonly edits: readonly MessageEditWindow[];\n}',
   },
   {
     name: 'SessionSurfaceSnapshot',

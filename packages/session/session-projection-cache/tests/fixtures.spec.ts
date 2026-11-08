@@ -146,6 +146,14 @@ afterEach(async () => {
 })
 
 describe('checkpoint JSON preservation', () => {
+  it('accepts a stored row with or without the edit stamp and rejects a negative one', () => {
+    // A record written before human-message edits carries no stamp: it stays
+    // valid, and the registry reads the absence as "folded through no edit".
+    expect(checkpointRow.safeParse({ ver: 1, seq: 71, val: 't' }).success).toBe(true)
+    expect(checkpointRow.safeParse({ ver: 1, seq: 71, val: 't', edits: 2 }).success).toBe(true)
+    expect(checkpointRow.safeParse({ ver: 1, seq: 71, val: 't', edits: -1 }).success).toBe(false)
+  })
+
   it('preserves opaque keys through StorageDomain read, put, and reopen', async () => {
     const root = await mkdtemp(join(tmpdir(), 'dsh-projcache-opaque-'))
     const id = SessionId('opaque-fixture')

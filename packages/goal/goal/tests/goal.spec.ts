@@ -66,6 +66,7 @@ function stubAgentForSession(session: Session, suppliedCtx?: Context): StubAgent
     inject(input) { this.inbox.append('next-step', input) },
     cancel() {},
     runMaintenance: task => task(new AbortController().signal),
+    editMessage: () => { throw new Error('unused stub Agent editMessage') },
     whenIdle() { return Promise.resolve() },
   }
   const stub = {

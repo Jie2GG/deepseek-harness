@@ -4,7 +4,9 @@ import type {
   ConversationLocation, ConversationNode, ConversationTimelineSnapshot, ConversationViewBuilder,
   ConversationViewDefinition, ConversationGroupInput, GroupNodePosition, NodeChange, NodeKey, PartialAssistant, RunningToolCall,
 } from '@deepseek-ai/dsh-client-ui-conversation/client'
-import type { ChatConversationViewNode, ChatNode, ChatNodeDataMap, ChatNodeKind } from '../contract/chat-nodes.ts'
+import type {
+  ChatConversationViewNode, ChatNode, ChatNodeDataMap, ChatNodeKind, MessageEditVoidRange,
+} from '../contract/chat-nodes.ts'
 import { isRunningTool } from '../contract/chat-nodes.ts'
 import { isVisibleChatNode } from '../contract/chat-visibility.ts'
 import type {
@@ -513,6 +515,34 @@ function presentationPosition(
 }
 
 /**
+ * Log-seq ranges each human-message edit voids, in the order the edits landed.
+ * A rewrite is one replacement copy that shadows the edited message together
+ * with the history that followed it. Rewriting a rewritten prompt adopts the
+ * same row, so the ranges its earlier copies voided ride on that row too;
+ * reading only the newest copy would bring back history the first edit already
+ * voided. Chat keeps compaction's shadowed turns visible because that
+ * conversation really happened and was only summarized; a rewrite did not
+ * happen, so its superseded bubbles leave the transcript.
+ * @param nodes - currently materialized Chat Nodes, any visibility state.
+ * @returns half-open ranges of superseded event sequences plus the owning Node.
+ */
+function editVoidRanges(
+  nodes: readonly ChatConversationViewNode[],
+): readonly { start: number; end: number; owner: string }[] {
+  const ranges: { start: number; end: number; owner: string }[] = []
+  for (const candidate of nodes) {
+    const node = candidate as ChatNode
+    if (node.kind !== 'user' && node.kind !== 'steering') continue
+    const voided: unknown = node.data.voidedRanges
+    if (!Array.isArray(voided)) continue
+    for (const range of voided as readonly MessageEditVoidRange[]) {
+      ranges.push({ start: range.start, end: range.end, owner: node.key })
+    }
+  }
+  return ranges
+}
+
+/**
  * Order visible Chat Nodes without changing existing relative order as process
  * eligibility changes. Opening input precedes process candidates, while
  * each synthetic process control sits between them.
@@ -522,7 +552,10 @@ function presentationPosition(
 export function orderedVisibleChatNodes(
   nodes: readonly ChatConversationViewNode[],
 ): ChatConversationViewNode[] {
-  const visible = nodes.filter(node => isVisibleChatNode(node as ChatNode))
+  const voids = editVoidRanges(nodes)
+  const visible = nodes.filter(node => isVisibleChatNode(node as ChatNode)
+    && !voids.some(range => node.key !== range.owner
+      && node.anchorSeq >= range.start && node.anchorSeq < range.end))
   const presentations = turnProcessPresentations(visible)
   return visible.sort((left, right) => {
     const leftPosition = presentationPosition(left, presentations)

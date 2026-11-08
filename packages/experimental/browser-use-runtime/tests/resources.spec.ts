@@ -23,6 +23,7 @@ async function fixture() {
       inbox: unsupportedInbox(), send() {}, followup() {}, inject() {}, cancel() {},
       steer: () => ({ outcome: Promise.resolve({ status: 'rejected' as const }) }),
       runMaintenance: task => task(new AbortController().signal),
+      editMessage: () => { throw new Error('unused stub Agent editMessage') },
       whenIdle: () => Promise.resolve(undefined),
     }
     const unregister = ctx.agents.register(agent)

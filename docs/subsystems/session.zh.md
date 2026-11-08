@@ -414,8 +414,31 @@ interface SessionSurface {
   readonly replaceGeneration: number
   /** Monotonic count of committed replacements and plugin-owned message changes. */
   readonly contentGeneration: number
+  /** Human-message edits committed so far, in event order. */
+  readonly edits: readonly MessageEditWindow[]
 }
 ```
+
+```ts type-equiv
+/** One committed in-place rewrite of a sent human message and the log range it voids. */
+interface MessageEditWindow {
+  /** Seq of the replacement copy that recorded the edit. */
+  readonly editSeq: SessionSeq
+  /** Seq of the human message the user rewrote. */
+  readonly editedSeq: SessionSeq
+  /** Inclusive first voided log seq: the edited message itself. */
+  readonly startSeq: SessionSeq
+  /**
+   * Exclusive end of the voided log range. The edit voids history up to the
+   * turn that carries it, so that turn's own boundary events stay durable and
+   * counted; when the replacement copy opens no later turn, this is the copy's
+   * own seq.
+   */
+  readonly endSeqExclusive: SessionSeq
+}
+```
+
+一次重写记录一个 `user/message` 替换副本，其来源写明被编辑的消息，因此模型从改正后的句子继续，而账本仍可按位置读取被丢弃的轮次。`messageEditWindows(events)` 无需折叠 surface 即可读取这些范围，`isVoidedByMessageEdit(windows, seq)` 判断某个事件是否仍然生效。需要回退对话派生状态的投影单元使用这一对函数；参见 [会话投影](session-projection.zh.md)。
 
 ### `SurfaceFoldReplacement` 与 `SurfaceFoldResult`：完整的 surface 回放
 
@@ -444,6 +467,8 @@ interface SurfaceFoldResult {
   replacements: SurfaceFoldReplacement[]
   /** Immutable projected messages, keyed by their original event sequences. */
   projectedMessages: ReadonlyMap<SessionSeq, Message>
+  /** Human-message edits in event order; each voids its own log range. */
+  edits: MessageEditWindow[]
 }
 ```
 
@@ -946,6 +971,16 @@ workspaceDesktop(): { name: string; available: boolean; fileManager: 'finder' | 
  * @returns the accepted title and durable event sequence.
  */
 @Remote('rename') rename(request: SessionRenameRequest): Promise<SessionRenameValue>
+
+/**
+ * Rewrite one sent human message, voiding the history after it, and ask again
+ * with the corrected text. The Session must be idle: an in-flight turn is
+ * stopped first.
+ * @param request - Session identity, target surface seq, and rewritten blocks.
+ * @returns the preserved message identity, shadowed node count, and cleared
+ *   pending-item count, or the `session/edit-rejected` business error.
+ */
+@Remote('editMessage') editMessage(request: SessionEditMessageRequest): Promise<SessionEditMessageValue>
 
 /**
  * Fork one cold-readable exact event prefix into a new Session. An omitted

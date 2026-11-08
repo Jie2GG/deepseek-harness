@@ -20,6 +20,7 @@
 import { Context, FiberState, Service } from '@deepseek-ai/cordis'
 import type { ZodType } from 'zod'
 import { SessionLogOffset, SessionSeq } from '@deepseek-ai/dsh-session'
+import { isUserMessageEdit, isVoidedByMessageEdit, messageEditWindows } from '@deepseek-ai/dsh-session/surface'
 import type {
   Session,
   SessionEvent,
@@ -101,6 +102,23 @@ export interface ProjectionDefinition<K extends string, S> {
    * @returns the next state (same reference when the event is not the unit's).
    */
   apply(state: NoInfer<S>, event: SessionEvent): NoInfer<S>
+  /**
+   * Whether a human-message edit rewinds this unit. When true, events inside an
+   * edit's voided range contribute nothing to the value: the unit's state equals
+   * what the log folded to immediately before the rewritten message, then
+   * replays forward from the edit. Only a unit whose events each carry complete
+   * post-change state may set true; a record that names a position and a count
+   * (the pending inbox splice) is split from its partner by the range boundary
+   * and would reject the replay. Leave false for settings the conversation does
+   * not own — effective directory, permission preset, selected model, turn
+   * numbering, titles, metering — and for any positional or sequence-dependent
+   * fold. An accepted edit clears stale pending input with its own durable
+   * record, so excluding the inbox costs no correctness. Counts, times, and
+   * billed totals a superseded branch contributed are meant to leave a
+   * rewound unit: they describe the conversation still in force.
+   * @default false
+   */
+  rewindable?: boolean
   /** Client view. Omit for host-only units. */
   wire?: K extends keyof SessionProjectionMap ? {
     /** Validates the wire payload before it leaves the host. */
@@ -205,6 +223,13 @@ export interface ProjectionCheckpointRow {
   seq: SessionSeqCursor
   /** The unit's internal state — plain JSON per the unit contract. */
   val: unknown
+  /**
+   * Human-message edits folded into `val`, present only on a rewound unit. The
+   * stamp detects a row whose state predates an edit: its folded prefix would
+   * still contain history the user rewrote away, so `restore` discards it. A row
+   * stored before the stamp exists decodes to `undefined`, which counts as no edits.
+   */
+  edits?: number | undefined
 }
 
 /** Checkpoint rows keyed by projection key (one session's persisted cache value). */
@@ -223,6 +248,8 @@ interface ErasedDefinition {
     summary: boolean
   } | undefined
   stateVersion: number
+  /** Whether a human-message edit rewinds this unit (see {@link ProjectionDefinition.rewindable}). */
+  rewindable: boolean
 }
 
 /** Per-session per-unit watermark and fixed live-drive view buffer. */
@@ -230,6 +257,8 @@ interface UnitCell {
   state: unknown
   /** Seq of the last event passed through `apply` (regardless of change). */
   observedSeq: SessionSeqCursor
+  /** Human-message edits at or below `observedSeq`; zero for a unit that does not rewind. */
+  edits: number
   /** `[previousView, currentView]`; undefined slots mean no cached comparison. */
   readonly views: [unknown, unknown]
 }
@@ -261,6 +290,44 @@ interface Registration {
 /** Convert a log offset to the inclusive cursor immediately before it. */
 function cursorBefore(offset: SessionLogOffset): SessionSeqCursor {
   return offset === 0 ? -1 : SessionSeq(offset - 1)
+}
+
+/** Committed human-message edits in one event window, in seq order. */
+function countMessageEdits(events: readonly SessionEvent[]): number {
+  let count = 0
+  for (const event of events) if (isUserMessageEdit(event)) count += 1
+  return count
+}
+
+/**
+ * The newest edit stamp present in one checkpoint. Rows written after the last
+ * edit carry it, so a rewound row stamped lower still folds history that edit
+ * voided and cannot seed a replay.
+ */
+function editCutOf(checkpoint: ProjectionCheckpoint): number {
+  let cut = 0
+  for (const row of Object.values(checkpoint)) {
+    if (row.edits !== undefined && row.edits > cut) cut = row.edits
+  }
+  return cut
+}
+
+/**
+ * The one row that may seed a fold: present, version-matched, and — for a
+ * rewound unit — stamped at the checkpoint's edit cut.
+ * @param def - the erased unit definition.
+ * @param row - that key's persisted row, when the cache holds one.
+ * @param cut - the checkpoint's edit cut from {@link editCutOf}.
+ * @returns the usable row, or `undefined` when the key must refold from `init`.
+ */
+function usableRow(
+  def: ErasedDefinition,
+  row: ProjectionCheckpointRow | undefined,
+  cut: number,
+): ProjectionCheckpointRow | undefined {
+  if (row === undefined || row.ver !== def.stateVersion) return undefined
+  if (def.rewindable && (row.edits ?? 0) !== cut) return undefined
+  return row
 }
 
 /**
@@ -302,6 +369,7 @@ export class SessionProjectionRegistry extends Service {
         registration.cells.set(session, {
           state: registration.def.init(session.header, session.inheritedEventCount),
           observedSeq: -1,
+          edits: 0,
           views: [undefined, undefined],
         })
       }
@@ -398,6 +466,7 @@ export class SessionProjectionRegistry extends Service {
         ? undefined
         : { viewSchema: wire.viewSchema, view: state => wire.view(state as S), summary: wire.summary !== false },
       stateVersion: definition.stateVersion,
+      rewindable: definition.rewindable === true,
     }
     if (!Number.isSafeInteger(definition.stateVersion) || definition.stateVersion < 0) {
       throw new Error(`session projection ${JSON.stringify(definition.key)} stateVersion must be a non-negative integer, got ${String(definition.stateVersion)}`)
@@ -416,6 +485,9 @@ export class SessionProjectionRegistry extends Service {
         }
         if (existing.def.wire?.summary !== erased.wire?.summary) {
           throw new Error(`session projection key ${JSON.stringify(key)} is already registered with summary=${String(existing.def.wire?.summary)}; refusing to share it with summary=${String(erased.wire?.summary)}`)
+        }
+        if (existing.def.rewindable !== erased.rewindable) {
+          throw new Error(`session projection key ${JSON.stringify(key)} is already registered with rewindable=${String(existing.def.rewindable)}; refusing to share it with rewindable=${String(erased.rewindable)}`)
         }
         existing.refs += 1
         registration = existing
@@ -609,10 +681,14 @@ export class SessionProjectionRegistry extends Service {
         ? registration.cells.get(session)
         : this.cellFor(registration, session)
       if (cell === undefined) continue
+      const edits = registration.def.rewindable && cell.edits > 0
+        ? { edits: cell.edits }
+        : {}
       rows[registration.def.key] = {
         ver: registration.def.stateVersion,
         seq: cell.observedSeq,
         val: structuredClone(cell.state),
+        ...edits,
       }
     }
     return rows
@@ -635,13 +711,12 @@ export class SessionProjectionRegistry extends Service {
    *   {@link restore} would serve empty values regardless).
    */
   restoreFloor(checkpoint: ProjectionCheckpoint): SessionLogOffset | undefined {
+    const cut = editCutOf(checkpoint)
     let floor: number | undefined
     for (const registration of this.registrations.values()) {
       if (registration.refs === 0) continue
-      const row = checkpoint[registration.def.key]
-      const need = row !== undefined && row.ver === registration.def.stateVersion
-        ? Math.max(row.seq + 1, 0)
-        : 0
+      const row = usableRow(registration.def, checkpoint[registration.def.key], cut)
+      const need = row === undefined ? 0 : Math.max(row.seq + 1, 0)
       floor = floor === undefined ? need : Math.min(floor, need)
     }
     return floor === undefined ? undefined : SessionLogOffset(Math.max(floor - 1, 0))
@@ -720,35 +795,49 @@ export class SessionProjectionRegistry extends Service {
     const beforeBase = cursorBefore(baseSeq)
     const values: Record<string, unknown> = {}
     const refreshed: ProjectionCheckpoint = {}
+    const cut = editCutOf(checkpoint)
+    const suppliedEdits = countMessageEdits(events)
     for (const registration of this.registrations.values()) {
       if (registration.refs === 0) continue
       const def = registration.def
-      const row = checkpoint[def.key]
-      const usable = row !== undefined
-        && row.ver === def.stateVersion
-        && row.seq >= beforeBase
-        && row.seq <= endSeq
+      const stored = checkpoint[def.key]
+      // A rewound unit's row also has to predate nothing: an edit in the tail
+      // voids events the row already folded, so only a row stamped at the
+      // supplied log's edit count can seed the replay. A row without a stamp
+      // predates the barrier and counts as zero edits.
+      const row = def.rewindable && (stored?.edits ?? 0) !== suppliedEdits
+        ? undefined
+        : usableRow(def, stored, cut)
+      const usable = row !== undefined && row.seq >= beforeBase && row.seq <= endSeq
       if (!usable && baseSeq > 0) {
         throw new Error(
           `session projection ${JSON.stringify(def.key)} cannot restore from seq ${baseSeq}: `
           + 'its checkpoint row is missing, version-mismatched, or beyond the supplied log end; re-read from seq 0',
         )
       }
-      let state = usable
-        ? def.stateSchema.parse(row.val)
-        : def.init(header, inheritedEventCount)
-      const from = usable ? row.seq : beforeBase
-      const startIndex = from - baseSeq + 1
-      for (let index = startIndex; index < events.length; index++) {
-        const event = events[index]
-        const expectedSeq = SessionSeq(baseSeq + index)
-        if (event === undefined || event.seq !== expectedSeq) {
-          throw new Error(`session projection ${JSON.stringify(def.key)} cannot restore across missing seq ${String(expectedSeq)}`)
+      let state: unknown
+      if (def.rewindable && !usable) {
+        state = this.foldBarrier(def, header, inheritedEventCount, events).state
+      } else {
+        state = usable ? def.stateSchema.parse(row.val) : def.init(header, inheritedEventCount)
+        const from = usable ? row.seq : beforeBase
+        const startIndex = from - baseSeq + 1
+        for (let index = startIndex; index < events.length; index++) {
+          const event = events[index]
+          const expectedSeq = SessionSeq(baseSeq + index)
+          if (event === undefined || event.seq !== expectedSeq) {
+            throw new Error(`session projection ${JSON.stringify(def.key)} cannot restore across missing seq ${String(expectedSeq)}`)
+          }
+          state = def.apply(state, event)
         }
-        state = def.apply(state, event)
       }
       if (def.wire !== undefined) values[def.key] = def.wire.viewSchema.parse(def.wire.view(state))
-      refreshed[def.key] = { ver: def.stateVersion, seq: endSeq, val: state }
+      refreshed[def.key] = {
+        ver: def.stateVersion,
+        seq: endSeq,
+        val: state,
+        ...def.rewindable && suppliedEdits > 0 ? { edits: suppliedEdits } : {},
+      }
     }
     return {
       snapshot: { asOfSeq: endSeq, values: values },
@@ -809,6 +898,7 @@ export class SessionProjectionRegistry extends Service {
       registration.cells.set(session, {
         state: row.val,
         observedSeq: row.seq,
+        edits: row.edits ?? 0,
         views: [undefined, undefined],
       })
     }
@@ -830,9 +920,71 @@ export class SessionProjectionRegistry extends Service {
     inheritedEventCount: SessionLogOffset,
     events: readonly SessionEvent[],
   ): UnitCell {
+    if (def.rewindable) {
+      const folded = this.foldBarrier(def, header, inheritedEventCount, events)
+      return {
+        state: folded.state,
+        observedSeq: events.at(-1)?.seq ?? -1,
+        edits: folded.edits,
+        views: [undefined, undefined],
+      }
+    }
     let state = def.init(header, inheritedEventCount)
     for (const event of events) state = def.apply(state, event)
-    return { state, observedSeq: (events.at(-1)?.seq ?? -1), views: [undefined, undefined] }
+    return { state, observedSeq: (events.at(-1)?.seq ?? -1), edits: 0, views: [undefined, undefined] }
+  }
+
+  /**
+   * Fold a rewound unit from init, skipping every event a later human-message
+   * edit voids. The surviving events are exactly the prefix before the rewritten
+   * message plus the edit and everything after it, so the result equals the state
+   * the Session holds now rather than one that still counts discarded history.
+   * @param def - the erased unit definition.
+   * @param header - immutable metadata for the Session being folded.
+   * @param inheritedEventCount - exact fork-inherited prefix length.
+   * @param events - the event window to fold, in seq order.
+   * @returns the folded state and the edit count it folded through.
+   */
+  private foldBarrier(
+    def: ErasedDefinition,
+    header: SessionHeader,
+    inheritedEventCount: SessionLogOffset,
+    events: readonly SessionEvent[],
+  ): { state: unknown; edits: number } {
+    const windows = messageEditWindows(events)
+    let state = def.init(header, inheritedEventCount)
+    let edits = 0
+    for (const event of events) {
+      if (isUserMessageEdit(event)) edits += 1
+      if (isVoidedByMessageEdit(windows, event.seq)) continue
+      state = def.apply(state, event)
+    }
+    return { state, edits }
+  }
+
+  /** Refold one unit from init across the Session's prefix through `throughSeq`. */
+  private refoldCell(
+    def: ErasedDefinition,
+    session: Session,
+    throughSeq: SessionSeqCursor,
+  ): UnitCell {
+    return this.buildCell(
+      def,
+      session.header,
+      session.inheritedEventCount,
+      // oxlint-disable-next-line typescript/no-deprecated -- Existing Session history read; migration deferred.
+      session.snapshotEvents(SessionLogOffset(0), SessionLogOffset(throughSeq + 1)),
+    )
+  }
+
+  /** Whether any event in one contiguous range records a human-message edit. */
+  private hasMessageEdit(session: Session, from: number, through: number): boolean {
+    for (let seq = from; seq <= through; seq++) {
+      // oxlint-disable-next-line typescript/no-deprecated -- Existing Session history read; migration deferred.
+      const event = session.eventAt(SessionSeq(seq))
+      if (event !== undefined && isUserMessageEdit(event)) return true
+    }
+    return false
   }
 
   /** Read (or lazily build, folding the full in-memory log) one unit's cell. */
@@ -861,6 +1013,17 @@ export class SessionProjectionRegistry extends Service {
     throughSeq: SessionSeqCursor,
   ): void {
     if (cell.observedSeq >= throughSeq) return
+    if (def.rewindable && this.hasMessageEdit(session, cell.observedSeq + 1, throughSeq)) {
+      // An edit inside this range voids history the cell already folded: rebuild
+      // the whole prefix instead of replaying the tail onto a stale state.
+      const refolded = this.refoldCell(def, session, throughSeq)
+      cell.state = refolded.state
+      cell.observedSeq = refolded.observedSeq
+      cell.edits = refolded.edits
+      cell.views[0] = undefined
+      cell.views[1] = undefined
+      return
+    }
     for (let seq = cell.observedSeq + 1; seq <= throughSeq; seq++) {
       // oxlint-disable-next-line typescript/no-deprecated -- Existing Session history read; migration deferred.
       const event = session.eventAt(SessionSeq(seq))
@@ -912,7 +1075,16 @@ export class SessionProjectionRegistry extends Service {
           )
         }
         const previousState = cell.state
-        const next = registration.def.apply(previousState, event)
+        let next: unknown
+        if (registration.def.rewindable && isUserMessageEdit(event)) {
+          // The edit voids history this cell already folded, so rebuild it from
+          // init across the surviving prefix rather than apply one transition.
+          const refolded = this.refoldCell(registration.def, session, event.seq)
+          next = refolded.state
+          cell.edits = refolded.edits
+        } else {
+          next = registration.def.apply(previousState, event)
+        }
         const changed = !Object.is(next, previousState)
         cell.state = next
         cell.observedSeq = event.seq

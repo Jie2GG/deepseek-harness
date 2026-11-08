@@ -103,9 +103,17 @@ function usageOutputTokens(usage: unknown): number | null {
   return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null
 }
 
-/** The `sessionStats` unit registered on `ctx.sessionProjections` (exported for the unit spec). */
+/**
+ * The `sessionStats` unit registered on `ctx.sessionProjections` (exported for
+ * the unit spec). It rewinds: the counts, times, and speed a client reads
+ * describe the conversation still in force, so a human-message edit drops the
+ * superseded branch's steps from them along with its tokens. The fold itself is
+ * unchanged, so its cache rows stay at the current version: the registry drops a
+ * rewound unit's row once the log records another edit.
+ */
 export const sessionStatsProjectionDefinition = {
   key: 'sessionStats',
+  rewindable: true,
   stateVersion: 1,
   stateSchema: sessionStatsStateSchema,
   init: () => ({

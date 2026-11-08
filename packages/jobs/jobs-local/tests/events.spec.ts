@@ -32,6 +32,7 @@ function agentIn(ctx: Context, rawId: string, presetScope?: ScopeKey): Agent {
     inject: () => {},
     cancel: () => {},
     runMaintenance: task => task(new AbortController().signal),
+    editMessage: () => { throw new Error('unused stub Agent editMessage') },
     whenIdle: () => Promise.resolve(),
   }
 }

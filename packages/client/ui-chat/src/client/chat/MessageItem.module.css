@@ -358,3 +358,68 @@
   font-size: 12px;
   line-height: 15px;
 }
+
+/* Inline rewrite of a sent prompt: the bubble's text becomes an editor in place. */
+.editForm {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+}
+
+.editInput {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 60px;
+  padding: 8px 10px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: var(--dsw-radius-lg);
+  background: var(--dsw-alias-bg-base);
+  color: var(--dsw-alias-label-primary);
+  font: inherit;
+  line-height: 22px;
+  resize: vertical;
+}
+
+.editInput:focus-visible {
+  outline: 2px solid var(--dsw-focus-ring-color);
+  outline-offset: 1px;
+}
+
+.editActions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.editButton {
+  padding: 4px 12px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: var(--dsw-radius-sm);
+  background: transparent;
+  color: var(--dsw-alias-label-primary);
+  font-size: 13px;
+  line-height: 20px;
+  cursor: pointer;
+}
+
+.editButton:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+
+.editButton:hover:not(:disabled) {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.editNotice {
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.editRefusal {
+  color: var(--dsw-alias-state-error-primary);
+  font-size: 12px;
+  line-height: 18px;
+}

@@ -105,6 +105,92 @@ export function isReplacementSurfaceEvent(
   return isSurfaceEvent(event) && event.surfaceOp !== 'append'
 }
 
+/** One committed in-place rewrite of a sent human message and the log range it voids. */
+export interface MessageEditWindow {
+  /** Seq of the replacement copy that recorded the edit. */
+  readonly editSeq: SessionSeq
+  /** Seq of the human message the user rewrote. */
+  readonly editedSeq: SessionSeq
+  /** Inclusive first voided log seq: the edited message itself. */
+  readonly startSeq: SessionSeq
+  /**
+   * Exclusive end of the voided log range. The edit voids history up to the
+   * turn that carries it, so that turn's own boundary events stay durable and
+   * counted; when the replacement copy opens no later turn, this is the copy's
+   * own seq.
+   */
+  readonly endSeqExclusive: SessionSeq
+}
+
+/**
+ * Whether an event is an in-place rewrite of a sent human message: a
+ * `user/message` replacement copy whose source names the edited message. The
+ * producer appends it through the same surface replacement contract compaction
+ * uses; the edit source separates a user rewrite from a summarizing checkpoint.
+ * @param event - event to test.
+ * @returns true when the event records a human-message edit.
+ */
+export function isUserMessageEdit(event: SessionEvent): boolean {
+  return event.type === 'user/message'
+    && event.surfaceOp !== 'append'
+    && event.data.source.kind === 'user-edit'
+}
+
+/**
+ * Read every edit window in one event window without folding the surface.
+ * A projection fold uses these ranges to rewind derived per-key state; surface
+ * folding alone validates node membership and tail placement.
+ * @param events - session events in sequence order.
+ * @returns edit windows in event order; empty when the log records no edit.
+ */
+export function messageEditWindows(events: readonly SessionEvent[]): MessageEditWindow[] {
+  const windows: MessageEditWindow[] = []
+  for (const event of events) {
+    if (event.type !== 'user/message') continue
+    const op = event.surfaceOp
+    if (op === 'append' || event.data.source.kind !== 'user-edit') continue
+    windows.push({
+      editSeq: event.seq,
+      editedSeq: event.data.source.editedSeq,
+      startSeq: op.startSeq,
+      endSeqExclusive: voidEndSeq(events, op.startSeq, event.seq),
+    })
+  }
+  return windows
+}
+
+/**
+ * The first log seq an edit must leave intact inside its own range.
+ * A rewrite voids the history around the message it replaces, but the turn that
+ * carries the rewrite starts before its `user/message` copy lands: boundary and
+ * prompt events from that turn forward are current work, not discarded history.
+ * @param events - events in seq order, covering the edit's range.
+ * @param startSeq - the edited message's seq: the range's first event.
+ * @param editSeq - the replacement copy's seq.
+ * @returns the exclusive end of the voided range.
+ */
+function voidEndSeq(events: readonly SessionEvent[], startSeq: SessionSeq, editSeq: SessionSeq): SessionSeq {
+  let end = editSeq
+  for (const event of events) {
+    if (event.seq >= editSeq) break
+    if (event.seq >= startSeq && event.type === 'turn/start') end = event.seq
+  }
+  return end
+}
+
+/**
+ * Whether one log seq falls inside any edit window.
+ * An event inside a window is history the user rewrote away: it stays durable
+ * and readable by position, but it contributes neither the model-visible
+ * surface nor a rewound projection's current state.
+ * @param windows - edit windows read from one log.
+ * @param seq - event seq to test.
+ * @returns true when a later edit voids the event.
+ */
+export function isVoidedByMessageEdit(windows: readonly MessageEditWindow[], seq: number): boolean {
+  return windows.some(window => seq >= window.startSeq && seq < window.endSeqExclusive)
+}
+
 /**
  * Project a single event into the LLM message it derives to, or null when it
  * produces none — a non-surface event (attempt, boundary, log-only record) or an
@@ -239,6 +325,8 @@ export interface SurfaceFoldResult {
   replacements: SurfaceFoldReplacement[]
   /** Immutable projected messages, keyed by their original event sequences. */
   projectedMessages: ReadonlyMap<SessionSeq, Message>
+  /** Human-message edits in event order; each voids its own log range. */
+  edits: MessageEditWindow[]
 }
 
 /** Readonly live projection of the message-producing session events. */
@@ -249,11 +337,14 @@ export interface SessionSurface {
   readonly replaceGeneration: number
   /** Monotonic count of committed replacements and plugin-owned message changes. */
   readonly contentGeneration: number
+  /** Human-message edits committed so far, in event order. */
+  readonly edits: readonly MessageEditWindow[]
 }
 
 /** Mutable state shared by complete and incremental folds. */
 interface SurfaceFoldState {
   nodes: SessionSeq[]
+  edits: MessageEditWindow[]
   replaceGeneration: number
   contentGeneration: number
   projectedMessages: Map<SessionSeq, Message>
@@ -265,6 +356,8 @@ interface SurfaceReplacePlan extends SurfaceFoldReplacement {
   kind: 'replace'
   startIdx: number
   endIdx: number
+  /** Set when the replacement is a human-message edit. */
+  edit?: MessageEditWindow
 }
 
 /** One validated surface transition that has not mutated fold state yet. */
@@ -275,7 +368,7 @@ type SurfacePlan =
 
 /** Create an empty surface fold state. */
 function createFoldState(): SurfaceFoldState {
-  return { nodes: [], replaceGeneration: 0, contentGeneration: 0, projectedMessages: new Map(), projections: new Set() }
+  return { nodes: [], edits: [], replaceGeneration: 0, contentGeneration: 0, projectedMessages: new Map(), projections: new Set() }
 }
 
 /** Whether a runtime value is a non-negative safe event sequence. */
@@ -506,6 +599,45 @@ function assertSystemHeadRewrite(
   }
 }
 
+/**
+ * Record a human-message edit and require it to shadow through the surface tail.
+ * The window opens at the edited message, so the rewrite replaces that message
+ * and every later node. Requiring the tail keeps one edit's voided log range
+ * contiguous, which is what a rewound projection refolds from.
+ * @param event - candidate replacement copy.
+ * @param state - fold state before the event applies.
+ * @param op - the event's positional replacement.
+ * @param range - resolved surface indices for that range.
+ * @returns the edit window, or undefined for any other replacement.
+ * @throws when the range stops short of the surface tail or misnames its start.
+ */
+function messageEditWindow(
+  event: SessionEvent,
+  state: SurfaceFoldState,
+  op: Extract<SurfaceOp, { op: 'replace' }>,
+  range: Pick<SurfaceReplacePlan, 'endIdx'>,
+  events: readonly SessionEvent[],
+): MessageEditWindow | undefined {
+  if (event.type !== 'user/message') return undefined
+  const source = event.data.source
+  if (source.kind !== 'user-edit') return undefined
+  if (range.endIdx !== state.nodes.length - 1) {
+    throw new Error(`user/message edit at seq ${event.seq}: endSeq ${op.endSeq} must be the last surface node`)
+  }
+  if (source.editedSeq !== op.startSeq) {
+    throw new Error(`user/message edit at seq ${event.seq}: editedSeq ${source.editedSeq} must equal the replacement start seq ${op.startSeq}`)
+  }
+  if (!Number.isSafeInteger(source.editCount) || source.editCount < 1) {
+    throw new Error(`user/message edit at seq ${event.seq}: editCount must be a positive integer`)
+  }
+  return {
+    editSeq: event.seq,
+    editedSeq: source.editedSeq,
+    startSeq: op.startSeq,
+    endSeqExclusive: voidEndSeq(events, op.startSeq, event.seq),
+  }
+}
+
 /** Validate one event at its replay boundary and prepare its atomic fold transition. */
 function planSurfaceEvent(
   state: SurfaceFoldState,
@@ -537,11 +669,13 @@ function planSurfaceEvent(
   assertSourceEventReferences(event, range.shadowedSeqs)
   assertToolResultRewrite(event, range.shadowedSeqs, events, baseSeq)
   assertSystemHeadRewrite(event, state, range.startIdx, range.shadowedSeqs, events, baseSeq)
+  const edit = messageEditWindow(event, state, surfaceOp, range, events)
   return {
     kind: 'replace',
     seq: event.seq,
     start: surfaceOp.startSeq,
     end: surfaceOp.endSeq,
+    ...(edit === undefined ? {} : { edit }),
     ...range,
   }
 }
@@ -568,6 +702,7 @@ function applySurfacePlan(
     state.nodes.push(plan.seq)
   } else if (plan?.kind === 'replace') {
     state.nodes.splice(plan.startIdx, plan.endIdx - plan.startIdx + 1, plan.seq)
+    if (plan.edit !== undefined) state.edits.push(plan.edit)
     state.replaceGeneration += 1
     state.contentGeneration += 1
   } else if (plan?.kind === 'project') {
@@ -605,7 +740,7 @@ export function foldSurface(events: readonly SessionEvent[], projections: readon
     )
     if (replacement !== undefined) replacements.push(replacement)
   }
-  return { nodes: [...state.nodes], replacements, projectedMessages: new Map(state.projectedMessages) }
+  return { nodes: [...state.nodes], replacements, edits: [...state.edits], projectedMessages: new Map(state.projectedMessages) }
 }
 
 /** Incremental ordered surface view and append-boundary validator. */
@@ -657,6 +792,13 @@ export class SurfaceManager implements SessionSurface {
     this._assertProjections()
     if (this._lastProcessedSeq < this.baseSeq + this.log.length - 1) this._processDelta()
     return this._state.contentGeneration
+  }
+
+  /** Committed human-message edits, in event order. */
+  get edits(): readonly MessageEditWindow[] {
+    this._assertProjections()
+    if (this._lastProcessedSeq < this.baseSeq + this.log.length - 1) this._processDelta()
+    return this._state.edits
   }
 
   /**

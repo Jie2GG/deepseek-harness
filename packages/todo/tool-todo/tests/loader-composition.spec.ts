@@ -41,6 +41,7 @@ async function agent(ctx: Context): Promise<Agent> {
     status: 'idle', ctx: scope.ctx,
     followup: () => {}, steer: () => {}, inject: () => {}, send: () => {}, cancel() {},
     runMaintenance: task => task(new AbortController().signal),
+    editMessage: () => { throw new Error('unused stub Agent editMessage') },
     whenIdle: () => Promise.resolve(),
   }
   await ctx.agents.register(value)

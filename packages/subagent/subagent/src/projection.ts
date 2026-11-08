@@ -60,6 +60,7 @@ const timingStateSchema: z.ZodType<TimingState> = z.object({
  */
 export const subagentTimingProjectionDefinition = {
   key: 'subagentTiming',
+  rewindable: true,
   stateSchema: timingStateSchema,
   init: () => ({ descriptorSeen: false, settledMs: 0 }),
   apply: (state, event) => {
@@ -170,6 +171,7 @@ function descriptorIdentity(event: SessionEvent): SubagentIdentityProjection | u
  */
 export const subagentIdentityProjectionDefinition = {
   key: 'subagent',
+  rewindable: true,
   stateSchema: identityStateSchema,
   init: () => ({}),
   apply: (state, event) => {

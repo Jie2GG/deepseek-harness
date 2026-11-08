@@ -55,7 +55,7 @@ await handle.dispose()   // stops the loop, unregisters, removes the session, un
 
 ### 驱动 agent 的对话
 
-句柄的方法把带标识的 user 角色消息路由进 agent 的收件箱。`followup()` 排队一条普通的下一个轮次提示词并唤醒驱动器；`steer()` 提交下一步输入并唤醒它；`inject()` 添加面向模型的上下文但不唤醒驱动器，因此它落在下一个被接纳的步骤中。`cancel(cause)` 中止当前活动，并在未设置 `keepInbox` 时清除待处理工作；`whenIdle()` 会在整个 agent 达到完全停稳后完成。
+句柄的方法把带标识的 user 角色消息路由进 agent 的收件箱。`followup()` 排队一条普通的下一个轮次提示词并唤醒驱动器；`steer()` 提交下一步输入并唤醒它；`inject()` 添加面向模型的上下文但不唤醒驱动器，因此它落在下一个被接纳的步骤中。`cancel(cause)` 中止当前活动，并在未设置 `keepInbox` 时清除待处理工作；`whenIdle()` 会在整个 agent 达到完全停稳后完成。`editMessage({targetSeq, content})` 会改写一条已发送的人工提示词：它要求 agent 处于空闲，报告会被该次改写遮蔽的 surface 节点数以及被清除的待处理条目数，并把改正后的文本排入队列，使下一轮次从它继续；工作目录、权限预设、模型、轮次编号等设置保持原值，而被丢弃轮次已经在日志之外完成的工作仍然有效。
 
 ```text
 handle.agent.followup({

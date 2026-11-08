@@ -123,6 +123,7 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
   // same state reference.
   await ctx.sessionProjections.register<'todos', TodoItem[] | null>({
     key: 'todos',
+    rewindable: true,
     stateSchema: todosProjectionSchema,
     init: () => null,
     apply: (state, event) => {

@@ -41,6 +41,7 @@ try {
     inject: () => { throw new Error('dsh-badge snapshot must receive the catalog at the step boundary') },
     cancel: () => {},
     runMaintenance: job => job(new AbortController().signal),
+    editMessage: () => { throw new Error('unused stub Agent editMessage') },
     whenIdle: () => Promise.resolve(),
   }
   const decision = await agentEvents(ctx, agent).waterfall(

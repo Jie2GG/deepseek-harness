@@ -72,7 +72,7 @@ describe('turn outline projection unit', () => {
     const { ctx, session } = await harness(true)
     expect(outlineOf(ctx, session)).toEqual([])
     expect(ctx.sessionProjections.checkpoint(session).turnOutline)
-      .toEqual({ ver: 2, seq: -1, val: { turns: [], draft: '' } })
+      .toEqual({ ver: 3, seq: -1, val: { turns: [], draft: '', pending: null } })
   })
 
   it('folds each turn with its boundary seq, first prompt, and turn-end response', async () => {
@@ -150,6 +150,41 @@ describe('turn outline projection unit', () => {
     ])
   })
 
+  it('leaves no row for a turn whose opening prompt an edit voids', async () => {
+    // The entry waits for the opening input to contribute, so the voided range
+    // that starts at that prompt removes the whole row instead of leaving a
+    // boundary-only entry with empty previews.
+    const { ctx, session } = await harness(true)
+    session.append('turn/start', { turn: 1 })
+    const prompt = appendPrompt(session, 'first ask')
+    appendAssistant(session, 1, 1, 'first answer')
+    endTurn(session, 1)
+    const secondBoundary = session.append('turn/start', { turn: 2 }).seq
+    const tail = session.surface.nodes.at(-1) ?? prompt
+    session.append('user/message', createUserMessage({
+      content: [{ type: 'text', text: 'corrected ask' }],
+      source: { kind: 'user-edit', editedSeq: prompt, editCount: 1 },
+    }), {
+      surfaceOp: { op: 'replace', startSeq: prompt, endSeq: tail },
+      sourceEventSeqs: [prompt, tail],
+    })
+    expect(outlineOf(ctx, session)).toEqual([
+      { turn: 2, seq: secondBoundary, prompt: 'corrected ask', response: '' },
+    ])
+  })
+
+  it('lists a closed turn that never received a human input', async () => {
+    // A notice-woken or continuing turn has no prompt to wait for: its boundary
+    // is claimed when the turn closes, so the rail still marks it.
+    const { ctx, session } = await harness(true)
+    const boundary = session.append('turn/start', { turn: 1 }).seq
+    appendAssistant(session, 1, 1, 'answer to a notice')
+    endTurn(session, 1)
+    expect(outlineOf(ctx, session)).toEqual([
+      { turn: 1, seq: boundary, prompt: '', response: 'answer to a notice' },
+    ])
+  })
+
   it('pushes at most three times per turn: boundary, prompt, and settled response', async () => {
     const { ctx, session } = await harness(true)
     const changes: { seq: SessionSeq; last: TurnOutlineEntry | undefined }[] = []
@@ -186,7 +221,7 @@ describe('turn outline projection unit', () => {
       time: 0,
       data: { message: { content: blocks } },
     }) as unknown as SessionEvent
-    const base: TurnOutlineState = { turns: [{ turn: 1, seq: SessionSeq(0), prompt: 'p', response: '' }], draft: '' }
+    const base: TurnOutlineState = { turns: [{ turn: 1, seq: SessionSeq(0), prompt: 'p', response: '' }], draft: '', pending: null }
     // Non-text blocks are skipped; whitespace-heavy short blocks cross the raw
     // reading bound early, so the collapsed (short) draft still marks the
     // unread remainder with an ellipsis.
@@ -205,16 +240,16 @@ describe('turn outline projection unit', () => {
       time: 0,
       data: { turn: 1, reason: { kind: 'completed' } },
     } as unknown as SessionEvent
-    expect(def.apply({ turns: [], draft: 'orphan' }, end)).toEqual({ turns: [], draft: '' })
+    expect(def.apply({ turns: [], draft: 'orphan', pending: null }, end)).toEqual({ turns: [], draft: '', pending: null })
     // …and a re-settled identical response keeps the entries' identity.
-    const settled: TurnOutlineState = { turns: [{ turn: 1, seq: SessionSeq(0), prompt: 'p', response: 'done' }], draft: 'done' }
+    const settled: TurnOutlineState = { turns: [{ turn: 1, seq: SessionSeq(0), prompt: 'p', response: 'done' }], draft: 'done', pending: null }
     const recommitted = def.apply(settled, end)
     expect(recommitted.turns).toBe(settled.turns)
     expect(recommitted.draft).toBe('')
   })
 
   it('skips a boundary that does not advance the turn number (fabricated envelope)', () => {
-    const state: TurnOutlineState = { turns: [{ turn: 2, seq: SessionSeq(5), prompt: 'kept', response: '' }], draft: '' }
+    const state: TurnOutlineState = { turns: [{ turn: 2, seq: SessionSeq(5), prompt: 'kept', response: '' }], draft: '', pending: null }
     const regressive = {
       type: 'turn/start',
       seq: SessionSeq(9),
@@ -257,6 +292,7 @@ describe('turn outline projection unit', () => {
             { turn: 2, seq: 4, prompt: '', response: '' },
           ],
           draft: '',
+          pending: null,
         },
       },
     }, [], SessionLogOffset(0), session.header, session.inheritedEventCount)).toThrow(/strictly increasing/)
@@ -270,6 +306,7 @@ describe('turn outline projection unit', () => {
             { turn: 2, seq: 4, prompt: '', response: '' },
           ],
           draft: '',
+          pending: null,
         },
       },
     }, [], SessionLogOffset(0), session.header, session.inheritedEventCount)).not.toThrow()
