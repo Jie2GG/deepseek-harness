@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import { AttachmentId, type ImageAttachmentRef } from '@deepseek-ai/dsh-attachment'
-import { aggregateTotals, aggregateTurn, buildTurns, turnContext } from '../src/client/stats-aggregate.ts'
+import {
+  aggregateTotals, aggregateTurn, buildTurns, standingTurnOrdinals, turnContext,
+} from '../src/client/stats-aggregate.ts'
 import type { StatsCall, StatsStepMetrics, StatsViewNode } from '../src/client/stats-contract.ts'
 import { CALL_LIMIT } from '../src/client/stats-fold.ts'
 
@@ -319,6 +321,22 @@ describe('turn aggregation', () => {
       toolWall: null,
       wall: null,
     })
+  })
+
+  it('numbers the standing turns an outline lists', () => {
+    // Absent or malformed outline: the table keeps its logged numbers.
+    expect(standingTurnOrdinals(undefined)).toBeNull()
+    expect(standingTurnOrdinals('not an outline')).toBeNull()
+    // Listing order is the display order: damaged, repeated, and non-integer
+    // entries neither take a number nor shift the turns behind them.
+    expect(standingTurnOrdinals([
+      { turn: 4, seq: 40, prompt: 'kept', response: '' },
+      { turn: 7, seq: 52, prompt: 'kept', response: '' },
+      { turn: 7, seq: 60, prompt: 'repeat', response: '' },
+      null,
+      { turn: 'x', seq: 1, prompt: 'damaged', response: '' },
+    ])).toEqual(new Map([[4, 1], [7, 2]]))
+    expect(standingTurnOrdinals([])).toEqual(new Map())
   })
 
   it('sums the sequential step tool spans', () => {

@@ -895,6 +895,30 @@ describe('turn rows', () => {
     expect(row.getAttribute('title')).toBe(say('totals.full.title'))
   })
 
+  it('drops the rows of turns an edit superseded and numbers the rest', () => {
+    // The outline lists only turns whose opening prompt still contributes, so a
+    // superseded branch leaves the table and the standing turns renumber.
+    const useProjection = (key: string): unknown => key === 'turnOutline'
+      ? [
+        { turn: 4, seq: 40, prompt: 'kept one', response: 'answer one' },
+        { turn: 5, seq: 52, prompt: 'kept two', response: 'answer two' },
+      ]
+      : undefined
+    mount({
+      turns: [
+        turn({ turn: 2, context: 100, steps: [step({ step: 1 })] }),
+        turn({ turn: 4, context: 200, steps: [step({ step: 1 })] }),
+        turn({ turn: 5, context: 300, steps: [step({ step: 1 })] }),
+      ],
+      stepCount: 3,
+    }, undefined, undefined, useProjection)
+    expect(document.querySelector('tr[data-turn="2"]')).toBeNull()
+    expect(document.querySelector('tr[data-turn="4"]')).not.toBeNull()
+    expect(screen.getAllByText(say('turn.label', { turn: 1 }))).toHaveLength(1)
+    expect(screen.getAllByText(say('turn.label', { turn: 2 }))).toHaveLength(1)
+    expect(screen.getByText(say('summary', { turns: 2, steps: 2 }))).toBeDefined()
+  })
+
   it('leaves the totals time blank when no turn wall was measured', () => {
     mount({ turns: [turn({ turn: 1, wall: null, context: 500 })], stepCount: 0 })
     fireEvent.click(screen.getByRole('switch', { name: say('table.showTotals') }))

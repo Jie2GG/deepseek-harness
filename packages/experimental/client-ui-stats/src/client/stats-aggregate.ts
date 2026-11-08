@@ -375,6 +375,26 @@ export interface StatsTotals {
 }
 
 /**
+ * One-based display number of every turn that still stands, read from the
+ * `turnOutline` projection value. A human-message edit voids a turn's opening
+ * input, and that turn leaves the outline, so its row leaves the table while
+ * the surviving turns number without gaps.
+ * @param outline - the `turnOutline` projection value, treated as wire data.
+ * @returns logged turn number to display number, or null when no outline is served.
+ */
+export function standingTurnOrdinals(outline: unknown): ReadonlyMap<number, number> | null {
+  if (!Array.isArray(outline)) return null
+  const ordinals = new Map<number, number>()
+  for (const entry of outline as readonly unknown[]) {
+    if (typeof entry !== 'object' || entry === null) continue
+    const turn = (entry as { turn?: unknown }).turn
+    if (typeof turn !== 'number' || !Number.isSafeInteger(turn) || ordinals.has(turn)) continue
+    ordinals.set(turn, ordinals.size + 1)
+  }
+  return ordinals
+}
+
+/**
  * Context of one turn under the selected basis.
  * @param turn - aggregated turn.
  * @param mode - latest final prompt size, or the sum of its step prompt sizes.

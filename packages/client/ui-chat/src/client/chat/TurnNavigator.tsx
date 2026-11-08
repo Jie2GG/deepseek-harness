@@ -65,7 +65,7 @@ const TurnMark = memo(function TurnMark({
       className={classes.join(' ')}
       aria-label={t(
         item.anchor.kind === 'loaded' ? 'chat.turnNavigation.jump' : 'chat.turnNavigation.jumpLoad',
-        { turn: item.turn },
+        { turn: item.ordinal ?? item.turn },
       )}
       aria-current={active ? 'true' : undefined}
       aria-busy={busy ? 'true' : undefined}
@@ -274,7 +274,7 @@ function TurnNavigatorRail(
             } as CSSProperties}
           >
             <div className={css.previewPrompt}>
-              {preview.prompt || t('chat.turnNavigation.turn', { turn: preview.turn })}
+              {preview.prompt || t('chat.turnNavigation.turn', { turn: preview.ordinal ?? preview.turn })}
             </div>
             {preview.response !== '' && <div className={css.previewResponse}>{preview.response}</div>}
           </div>

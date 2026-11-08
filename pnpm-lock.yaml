@@ -9439,6 +9439,9 @@ importers:
       '@deepseek-ai/dsh-session-stats':
         specifier: workspace:*
         version: link:../../session/session-stats
+      '@deepseek-ai/dsh-session-turn-outline':
+        specifier: workspace:*
+        version: link:../../session/session-turn-outline
       '@deepseek-ai/dsh-token-meter':
         specifier: workspace:*
         version: link:../../llm/token-meter

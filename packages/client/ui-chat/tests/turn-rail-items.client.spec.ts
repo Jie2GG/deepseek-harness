@@ -19,8 +19,8 @@ describe('mergeTurnRailItems', () => {
       { turn: 2, seq: 9, prompt: '', response: '' },
     ])
     expect(items).toEqual([
-      { turn: 1, prompt: 'first', response: 'first answer', anchor: { kind: 'unloaded', seq: 0 } },
-      { turn: 2, prompt: '', response: '', anchor: { kind: 'unloaded', seq: 9 } },
+      { turn: 1, ordinal: 1, prompt: 'first', response: 'first answer', anchor: { kind: 'unloaded', seq: 0 } },
+      { turn: 2, ordinal: 2, prompt: '', response: '', anchor: { kind: 'unloaded', seq: 9 } },
     ])
   })
 
@@ -34,30 +34,31 @@ describe('mergeTurnRailItems', () => {
       ],
     )
     expect(items).toEqual([
-      { turn: 1, prompt: 'one', response: 'answer one', anchor: { kind: 'unloaded', seq: 0 } },
+      { turn: 1, ordinal: 1, prompt: 'one', response: 'answer one', anchor: { kind: 'unloaded', seq: 0 } },
       {
         turn: 2,
+        ordinal: 2,
         prompt: 'two from outline',
         response: 'answer two from outline',
         anchor: { kind: 'loaded', key: 'anchor-2' },
       },
-      { turn: 3, prompt: 'p3', response: 'r3', anchor: { kind: 'loaded', key: 'anchor-3' } },
+      { turn: 3, ordinal: 3, prompt: 'p3', response: 'r3', anchor: { kind: 'loaded', key: 'anchor-3' } },
     ])
   })
 
   it('passes loaded turns through when the outline is absent or lagging', () => {
     expect(mergeTurnRailItems([loadedItem(7)], undefined)).toEqual([
-      { turn: 7, prompt: 'p7', response: 'r7', anchor: { kind: 'loaded', key: 'anchor-7' } },
+      { turn: 7, ordinal: null, prompt: 'p7', response: 'r7', anchor: { kind: 'loaded', key: 'anchor-7' } },
     ])
     expect(mergeTurnRailItems([loadedItem(4)], [{ turn: 3, seq: 1, prompt: 'older', response: '' }])).toEqual([
-      { turn: 3, prompt: 'older', response: '', anchor: { kind: 'unloaded', seq: 1 } },
-      { turn: 4, prompt: 'p4', response: 'r4', anchor: { kind: 'loaded', key: 'anchor-4' } },
+      { turn: 3, ordinal: 1, prompt: 'older', response: '', anchor: { kind: 'unloaded', seq: 1 } },
+      { turn: 4, ordinal: null, prompt: 'p4', response: 'r4', anchor: { kind: 'loaded', key: 'anchor-4' } },
     ])
   })
 
   it('drops entries with damaged navigation fields but degrades malformed previews to empty', () => {
     expect(mergeTurnRailItems([loadedItem(1)], 'not an outline')).toEqual([
-      { turn: 1, prompt: 'p1', response: 'r1', anchor: { kind: 'loaded', key: 'anchor-1' } },
+      { turn: 1, ordinal: null, prompt: 'p1', response: 'r1', anchor: { kind: 'loaded', key: 'anchor-1' } },
     ])
     const items = mergeTurnRailItems([], [
       { turn: -1, seq: 0, prompt: 'negative turn', response: '' },
@@ -70,8 +71,18 @@ describe('mergeTurnRailItems', () => {
     ])
     // turn/seq are load-bearing (drop); previews are decorative (degrade).
     expect(items).toEqual([
-      { turn: 3, prompt: '', response: '', anchor: { kind: 'unloaded', seq: 4 } },
-      { turn: 6, prompt: 'kept', response: '', anchor: { kind: 'unloaded', seq: 7 } },
+      { turn: 3, ordinal: 1, prompt: '', response: '', anchor: { kind: 'unloaded', seq: 4 } },
+      { turn: 6, ordinal: 2, prompt: 'kept', response: '', anchor: { kind: 'unloaded', seq: 7 } },
     ])
+  })
+
+  it('numbers surviving turns in order when an edit removed earlier turns', () => {
+    const items = mergeTurnRailItems([loadedItem(4)], [
+      { turn: 4, seq: 40, prompt: 'kept', response: 'answer' },
+      { turn: 5, seq: 52, prompt: 'next', response: '' },
+    ])
+    // The outline holds only the turns whose opening prompt survived, so the
+    // rail numbers them from one instead of repeating their logged numbers.
+    expect(items.map(item => item.ordinal)).toEqual([1, 2])
   })
 })

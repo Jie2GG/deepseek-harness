@@ -6,7 +6,7 @@ import {
 } from 'react'
 import { SegmentedControl, Switch } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { LoadOlderResult } from './stats-contract.ts'
-import { aggregateTotals, turnContext } from './stats-aggregate.ts'
+import { aggregateTotals, standingTurnOrdinals, turnContext } from './stats-aggregate.ts'
 import { isNumber } from './stats-usage.ts'
 import { totalsFromProjections } from './stats-totals.ts'
 import css from './stats.module.css'
@@ -46,11 +46,20 @@ export function StatsView(props: StatsViewProps): ReactElement {
   const pendingPrepend = useRef<PendingPrepend | null>(null)
   const initialized = useRef(false)
   const autoLoaded = useRef(false)
-  const turns = snapshot.turns
+  // A human-message edit voids whole turns, and the outline lists only those
+  // that still stand: their rows leave the table and the rest renumber. Without
+  // an outline the table keeps every loaded turn and its logged numbers.
+  const ordinals = standingTurnOrdinals(useProjection('turnOutline'))
+  const turns = ordinals === null
+    ? snapshot.turns
+    : snapshot.turns.filter(turn => ordinals.has(turn.turn))
   const firstTurn = turns[0]?.turn ?? null
   const latestTurn = turns.at(-1)?.turn ?? null
   const isTurnOpen = (turnNumber: number): boolean =>
     view.openTurns[turnNumber] ?? defaultTurnOpen(view.mode, turnNumber, latestTurn)
+  const stepCount = ordinals === null
+    ? snapshot.stepCount
+    : turns.reduce((total, turn) => total + turn.steps.length, 0)
   const allOpen = turns.length > 0 && turns.every(turn => isTurnOpen(turn.turn))
   const hasRunning = turns.some(turn =>
     isTimeRunning(turn) || turn.steps.some(step => isTimeRunning(step)))
@@ -246,6 +255,7 @@ export function StatsView(props: StatsViewProps): ReactElement {
             <tbody>
               {turns.flatMap(turn => turnRows({
                 turn,
+                ordinal: ordinals?.get(turn.turn) ?? turn.turn,
                 t,
                 loadImage,
                 now,
@@ -271,7 +281,7 @@ export function StatsView(props: StatsViewProps): ReactElement {
       </div>
       <div className={css.toolbar}>
         <span className={css.summary}>
-          {t('summary', { turns: turns.length, steps: snapshot.stepCount })}
+          {t('summary', { turns: turns.length, steps: stepCount })}
         </span>
         <div className={css.controls}>
           <span className={css.controlLabel}>{t('table.showTotals')}</span>

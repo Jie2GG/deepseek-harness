@@ -30,6 +30,8 @@ import css from './stats.module.css'
 // Type-only: merges sessionStats and tokenUsage into SessionProjectionMap for useProjection.
 import type {} from '@deepseek-ai/dsh-session-stats/client'
 import type {} from '@deepseek-ai/dsh-token-meter/client'
+// Type-only: merges turnOutline into SessionProjectionMap for the standing turn order.
+import type {} from '@deepseek-ai/dsh-session-turn-outline/client'
 
 /** Steps one turn renders before the "show all" control appears. */
 const STEP_LIMIT = 24
@@ -227,6 +229,8 @@ interface CallGroup {
 /** Table state shared by one turn's rendered rows. */
 interface TurnRowsOptions {
   readonly turn: StatsTurnMetrics
+  /** Number the table shows for this Turn: its place among the standing turns. */
+  readonly ordinal: number
   readonly t: StatsTranslate
   readonly loadImage: LoadImage
   readonly now: number
@@ -1835,7 +1839,7 @@ function stepRows(options: StepRowsOptions): ReactNode[] {
 /** All rows of one turn: the clickable header, then the expanded body. */
 export function turnRows(options: TurnRowsOptions): ReactNode[] {
   const {
-    turn, t, loadImage, now, open, state, turnScale, contextMode, showEvents, showContextDelta,
+    turn, ordinal, t, loadImage, now, open, state, turnScale, contextMode, showEvents, showContextDelta,
     contextDelta, onToggle, onToggleDetail, onControl,
   } = options
   const cells = metricsCells(turn, t)
@@ -1852,14 +1856,14 @@ export function turnRows(options: TurnRowsOptions): ReactNode[] {
           type="button"
           className={css.rowToggle}
           aria-expanded={open}
-          aria-label={t('turn.toggle.aria', { turn: turn.turn })}
+          aria-label={t('turn.toggle.aria', { turn: ordinal })}
           title={t('turn.toggle.title')}
           onClick={(event) => {
             event.stopPropagation()
             onToggle()
           }}
         >
-          {t('turn.label', { turn: turn.turn })}
+          {t('turn.label', { turn: ordinal })}
         </button>
         {isNumber(turn.startTime) ? (
           <span

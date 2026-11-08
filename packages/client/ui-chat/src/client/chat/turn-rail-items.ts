@@ -13,6 +13,12 @@ import type { TurnNavigationItem } from '../contract/snapshot.ts'
 /** One rail mark: a loaded Turn scrolls to its row; an unloaded one pages history through its seq first. */
 export interface TurnRailItem {
   readonly turn: number
+  /**
+   * One-based position among the turns that still stand, or `null` when no host
+   * outline provides that order. A human-message edit drops a turn from the
+   * outline, so the rail numbers the surviving turns without leaving gaps.
+   */
+  readonly ordinal: number | null
   /** Bounded prompt preview (loaded window first, outline fallback). */
   readonly prompt: string
   /** Bounded response preview (loaded window first, outline fallback). */
@@ -55,7 +61,8 @@ function outlineEntries(outline: unknown): readonly unknown[] {
  * A turn present in both sides keeps the loaded anchor, taking an outline
  * preview only where the window's own is empty (a mid-Turn window head, or a
  * turn whose loaded nodes carry no text); turns on one side only pass
- * through. Result ascends by turn.
+ * through. Result ascends by turn, and each item takes its place in the
+ * outline's standing order as its rail number.
  * @param loaded - loaded-window rail items (timeline order).
  * @param outline - `turnOutline` projection value, treated as wire data.
  * @returns every known turn, ascending; a stable empty array when none.
@@ -64,10 +71,12 @@ export function mergeTurnRailItems(
   loaded: readonly TurnNavigationItem[],
   outline: unknown,
 ): readonly TurnRailItem[] {
-  const byTurn = new Map<number, TurnRailItem>()
+  const byTurn = new Map<number, Omit<TurnRailItem, 'ordinal'>>()
+  const standing: number[] = []
   for (const raw of outlineEntries(outline)) {
     const entry = outlineEntry(raw)
     if (entry === undefined) continue
+    standing.push(entry.turn)
     byTurn.set(entry.turn, {
       turn: entry.turn,
       prompt: entry.prompt,
@@ -75,6 +84,7 @@ export function mergeTurnRailItems(
       anchor: { kind: 'unloaded', seq: entry.seq },
     })
   }
+  const ordinals = new Map(standing.map((turn, index) => [turn, index + 1]))
   for (const item of loaded) {
     const preview = byTurn.get(item.turn)
     byTurn.set(item.turn, {
@@ -85,5 +95,7 @@ export function mergeTurnRailItems(
     })
   }
   if (byTurn.size === 0) return EMPTY_ITEMS
-  return [...byTurn.values()].sort((left, right) => left.turn - right.turn)
+  return [...byTurn.values()]
+    .sort((left, right) => left.turn - right.turn)
+    .map(item => ({ ...item, ordinal: ordinals.get(item.turn) ?? null }))
 }
