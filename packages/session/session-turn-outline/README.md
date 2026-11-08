@@ -9,7 +9,7 @@ English | [中文](README.zh.md)
 
 ## Summary
 
-This package gives history clients a whole-session outline of every started turn, including bounded prompt and settled-response previews. Clients can navigate turns that are not yet loaded and page backward from the exact event sequence needed to load a selected turn. It fits assemblies that provide session projections; elsewhere, clients continue using loaded-window navigation. Previews exclude injected context and tool results, and a response appears only after its turn settles.
+This package gives history clients a whole-session outline of every turn whose opening human input still stands, including bounded prompt and settled-response previews. A human-message edit voids the turn it rewrote, and that turn leaves the outline. Clients can navigate turns that are not yet loaded and page backward from the exact event sequence needed to load a selected turn. It fits assemblies that provide session projections; elsewhere, clients continue using loaded-window navigation. Previews exclude injected context and tool results, and a response appears only after its turn settles.
 
 ## Table of Contents
 
@@ -41,10 +41,10 @@ Mount the plugin beside the session store and the projection registry when clien
 |---|---|
 | `turn` | Host-assigned turn number from the `turn/start` payload |
 | `seq` | The turn's `turn/start` event seq — paging a window back through this seq loads the whole turn |
-| `prompt` | Preview of the turn's first human prompt (space-joined text blocks, collapsed whitespace, 50-character cap with a trailing ellipsis when clipped — one rail-card line); `''` until an eligible prompt lands |
+| `prompt` | Preview of the turn's first human prompt (space-joined text blocks, collapsed whitespace, 50-character cap with a trailing ellipsis when clipped — one rail-card line); `''` for a turn opened without one |
 | `response` | Preview of the turn's final text-bearing assistant message (same normalization, 120-character cap — up to three rail-card lines); `''` until the turn ends with assistant text |
 
-The wire value is the complete entry array, strictly increasing by `turn` (whole-value rule): consumers replace, never merge. Prompts fill only from `user/message` events with the human `user` source, so injected context and tool results never leak into navigation; a turn whose prompt is images-only keeps `''` and consumers label it by number. The response buffers as a draft while its turn streams and commits at `turn/end`; the change feed's raw-view identity gate keeps draft-only changes quiet, so the outline pushes at most three times per turn — boundary, prompt, settled response. Preview budgets match the chat rail's loaded-turn previews, so a turn shows the same words before and after its events load.
+The wire value is the complete entry array, strictly increasing by `turn` (whole-value rule): consumers replace, never merge. A `turn/start` only holds its boundary, and the turn's first `user/message` cuts the entry carrying that boundary's seq, so a turn whose opening prompt an edit voided never appears; a turn that closes without any contributing input gets its entry at `turn/end`. Prompts fill from `user/message` events with the human `user` or `user-edit` source, so injected context and tool results never leak into navigation; a turn whose prompt is images-only keeps `''` and consumers label it by number. The response buffers as a draft while its turn streams and commits at `turn/end`; the change feed's raw-view identity gate keeps draft-only changes quiet, so the outline pushes at most three times per turn — boundary, prompt, settled response. Preview budgets match the chat rail's loaded-turn previews, so a turn shows the same words before and after its events load.
 
 ### Failures and recovery
 
@@ -76,6 +76,7 @@ The unit is a pure fold over committed session events. `turn/start` — not the 
 
 - Uninteresting events return the same state reference, and draft-only changes keep the `turns` array's identity; the registry's two `Object.is` gates then hold the feed to at most three pushes per turn.
 - A `turn/start` that does not advance the turn number is skipped, keeping the outline sorted; a retried boundary's previews then land on the standing entry.
+- The held boundary lives in `pending`, so an entry exists only for a turn whose opening input contributed. Because a human-message edit voids from that prompt forward, the whole row disappears rather than lingering with empty previews.
 - The wire view projects `state.turns`; the persisted-cache state schema wraps the wire schema with the draft field.
 
 </details>
