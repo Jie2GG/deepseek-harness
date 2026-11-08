@@ -4,19 +4,30 @@ import type {
   SteeringMessageNode, UserMessageNode,
 } from '@deepseek-ai/dsh-client-ui-conversation/client'
 import { isAppendSurfaceEvent, isReplacementSurfaceEvent } from '@deepseek-ai/dsh-session/surface'
+import type { MessageEditVoidRange } from '../contract/chat-nodes.ts'
 import type { InboxState } from './inbox.ts'
 import type { ProcessEvidenceState } from './turn-process.ts'
 import { chatNode, contextLocation } from './common.ts'
 import { contextForm, contextProducer } from './event-projection.ts'
 
-interface ReferencedUserMessageNode extends UserMessageNode {
+/** Log-seq ranges superseded by every rewrite of the human message a row carries. */
+interface RewrittenMessageFields {
+  /**
+   * One range per rewrite that adopted this row, oldest first. `seq` and `source`
+   * describe only the newest copy, so the ranges voided by earlier copies live
+   * here and keep that superseded history out of the transcript.
+   */
+  readonly voidedRanges?: readonly MessageEditVoidRange[]
+}
+
+interface ReferencedUserMessageNode extends UserMessageNode, RewrittenMessageFields {
   /** Labels cited by the immediately following session-reference context. */
   readonly referenceLabels?: readonly string[]
   /** Skill names the same step's `skill-invocation` injections loaded. */
   readonly skillNames?: readonly string[]
 }
 
-interface ReferencedSteeringMessageNode extends SteeringMessageNode {
+interface ReferencedSteeringMessageNode extends SteeringMessageNode, RewrittenMessageFields {
   /** Labels cited by the immediately following session-reference context. */
   readonly referenceLabels?: readonly string[]
   /** Skill names the same step's `skill-invocation` injections loaded. */
@@ -76,6 +87,25 @@ function contextMessage(
 function followsProcessEvidence(location: ConversationLocation, reader: ConversationContextReader): boolean {
   if (location.kind !== 'turn' && location.kind !== 'step') return false
   return reader.previous<ProcessEvidenceState>('process-evidence')?.state.turn === location.turn.turn
+}
+
+/**
+ * Half-open log-seq range one rewrite supersedes, in the same form the session
+ * surface records: the edited prompt through the history before the Turn that
+ * carries the replacement copy, whose boundary events stay current work.
+ * @param editedSeq - log seq of the message the rewrite replaced.
+ * @param copySeq - log seq of the replacement copy itself.
+ * @param carryingTurnStart - log seq of the copy's own Turn start, if resolved.
+ * @returns the range the rewrite voids.
+ */
+function voidedRangeForEdit(
+  editedSeq: number,
+  copySeq: number,
+  carryingTurnStart: number | undefined,
+): MessageEditVoidRange {
+  const carriesTurn = carryingTurnStart !== undefined
+    && carryingTurnStart > editedSeq && carryingTurnStart < copySeq
+  return { start: editedSeq, end: carriesTurn ? carryingTurnStart : copySeq }
 }
 
 /** User, steering, and injected-context message classification Definition. */
@@ -144,13 +174,22 @@ export const messageDefinition: ConversationNodeDefinition<MessageNode> = {
     // position become the copy's.
     if (state.kind !== 'user' && state.kind !== 'steering') return state
     if (event.type !== 'user/message' || event.surfaceOp === 'append') return state
-    if (event.data.source.kind !== 'user-edit') return state
+    const source = event.data.source
+    if (source.kind !== 'user-edit') return state
+    const location = match.location
+    const carryingTurnStart = location.kind === 'turn' || location.kind === 'step'
+      ? location.turn.start?.seq
+      : undefined
     return {
       ...state,
       content: event.data.content,
       seq: event.seq,
       time: event.time,
-      source: event.data.source,
+      source,
+      voidedRanges: [
+        ...state.voidedRanges ?? [],
+        voidedRangeForEdit(source.editedSeq, event.seq, carryingTurnStart),
+      ],
     }
   },
   buildViewNode: (context) => {

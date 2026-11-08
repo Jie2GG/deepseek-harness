@@ -60,7 +60,7 @@ When an Assistant attempt retires without a visible message, Chat hides its alre
 
 Text and reasoning contribute to Assistant visibility only when they contain a non-whitespace character. Streaming appends reuse each block's visibility; block replacement and finalized messages recalculate it while preserving the original text.
 
-A human-message edit also voids presentation: every Node whose event lies between the edited prompt and its replacement copy leaves the transcript, including that Turn's process control and closing row, while the rewrite keeps the original prompt's place. A compaction summary shadows history for the model only — the turns it replaced stay readable here, because the person saw them and the model answered them.
+A human-message edit also voids presentation: every Node whose event lies between the edited prompt and the Turn carrying its replacement copy leaves the transcript, including that Turn's process control and closing row, while the rewrite keeps the original prompt's place. Rewriting a rewritten prompt keeps every range its earlier copies voided, so each superseded branch stays out of the transcript. A compaction summary shadows history for the model only — the turns it replaced stay readable here, because the person saw them and the model answered them.
 
 <a id="command-and-failure-rows"></a>
 ## Command and failure rows

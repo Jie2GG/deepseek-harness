@@ -3209,4 +3209,46 @@ describe('human-message edit in Chat', () => {
     ])
     expect(node(view, 'user')?.data).toMatchObject({ seq: 8, source: { kind: 'user-edit', editedSeq: 2 } })
   })
+
+  /** A second rewrite of the already rewritten prompt, opening Turn 3. */
+  function secondEditEntries(): SessionLiveEventEntry[] {
+    return [
+      at(12, 'turn/start', { turn: 3 }),
+      at(13, 'step/start', { turn: 3, step: 1 }),
+      at(14, 'user/message', {
+        ...textMessage('ask-1', 'plain greeting'),
+        source: { kind: 'user-edit', editedSeq: 8, editCount: 2 },
+      }, { surfaceOp: { op: 'replace', startSeq: 8, endSeq: 10 }, sourceEventSeqs: [8, 10] }),
+      at(15, 'assistant/live-chunk', {
+        turn: 3, step: 1, chunk: { type: 'text-delta', index: 0, text: 'third answer' },
+      }),
+      at(16, 'assistant/message', { turn: 3, step: 1, message: assistantMessage('answer-3', 'third answer') }, { surfaceOp: 'append' }),
+      at(17, 'turn/end', { turn: 3, reason: { kind: 'completed' } }),
+    ]
+  }
+
+  it.each(['replay', 'live'] as const)('keeps history voided by an earlier rewrite superseded (%s)', (mode) => {
+    const entries = [...editEntries(), ...secondEditEntries()]
+    const value = assembler(mode === 'replay' ? entries : [])
+    if (mode === 'live') {
+      for (const entry of entries) {
+        value.append(entry)
+        value.flush()
+      }
+    }
+    const view = snapshot(value)
+    // The second rewrite adopts the first copy's row, so both voided ranges stay
+    // in force: neither superseded branch returns to the transcript.
+    expect(bubbles(view)).toEqual([
+      'user@14',
+      'turn-process@14.9',
+      'assistant-step@15',
+      'turn-tail@17.1',
+    ])
+    expect(node(view, 'user')?.data).toMatchObject({
+      seq: 14,
+      source: { kind: 'user-edit', editedSeq: 8, editCount: 2 },
+      voidedRanges: [{ start: 2, end: 6 }, { start: 8, end: 12 }],
+    })
+  })
 })

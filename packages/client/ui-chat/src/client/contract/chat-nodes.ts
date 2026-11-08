@@ -34,6 +34,17 @@ export type ChatNode<Kind extends ChatNodeKind = ChatNodeKind> = {
   }
 }[Kind]
 
+/** Half-open log-seq range that one rewrite of a human message supersedes. */
+export interface MessageEditVoidRange {
+  /** Inclusive first superseded log seq: the message the rewrite replaced. */
+  readonly start: number
+  /**
+   * Exclusive end: the first log seq the rewrite leaves intact. The Turn carrying
+   * the replacement copy opens there; when no later Turn opens, the copy itself.
+   */
+  readonly end: number
+}
+
 /** Final Assistant row payload shared by streaming and settled states. */
 export interface AssistantChatData {
   readonly status: 'running' | 'settled' | 'interrupted'

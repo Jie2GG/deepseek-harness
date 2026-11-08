@@ -93,6 +93,45 @@ describe('human-message edit surface fold', () => {
     expect(isVoidedByMessageEdit(windows, 5)).toBe(false)
   })
 
+  it('keeps both voided ranges when a rewritten prompt is rewritten again across a turn', () => {
+    const events = [
+      ...editLog(),
+      { type: 'step/start', seq: SessionSeq(6), time: 6, data: { turn: 2, step: 1 } },
+      { type: 'assistant/message', seq: SessionSeq(7), time: 7, data: answer('second answer'), surfaceOp: 'append' },
+      { type: 'turn/end', seq: SessionSeq(8), time: 8, data: { turn: 2, reason: { kind: 'completed' } } },
+      { type: 'turn/start', seq: SessionSeq(9), time: 9, data: { turn: 3 } },
+      {
+        type: 'user/message',
+        seq: SessionSeq(10),
+        time: 10,
+        data: editMessage('corrected twice', 5, 2),
+        ...replacing([5, 7]),
+      },
+    ] as unknown as SessionEvent[]
+    // Chat renders from these ranges, so a rewrite of a rewrite must leave both
+    // behind: the first copy and its answer go, while the newest Turn stays current.
+    expect(messageEditWindows(events)).toEqual([
+      {
+        editSeq: SessionSeq(5),
+        editedSeq: SessionSeq(1),
+        startSeq: SessionSeq(1),
+        endSeqExclusive: SessionSeq(4),
+      },
+      {
+        editSeq: SessionSeq(10),
+        editedSeq: SessionSeq(5),
+        startSeq: SessionSeq(5),
+        endSeqExclusive: SessionSeq(9),
+      },
+    ])
+    const windows = messageEditWindows(events)
+    expect(isVoidedByMessageEdit(windows, 2)).toBe(true)
+    expect(isVoidedByMessageEdit(windows, 7)).toBe(true)
+    expect(isVoidedByMessageEdit(windows, 9)).toBe(false)
+    expect(isVoidedByMessageEdit(windows, 10)).toBe(false)
+    expect(foldSurface(events).nodes).toEqual([SessionSeq(10)])
+  })
+
   it('rejects an edit range that stops short of the surface tail', () => {
     const session = Session.create(SessionId('edit-tail'))
     session.append('turn/start', { turn: 1 })
