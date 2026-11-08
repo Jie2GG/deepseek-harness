@@ -363,9 +363,12 @@ export const UserMessageNodeView = memo(function UserMessageNodeView({
   const turn = node.location.kind === 'turn' || node.location.kind === 'step'
     ? node.location.turn
     : undefined
-  // An open Turn is still answering this prompt, and work it already did outside
-  // the log cannot be undone, so editing waits until the Turn closes.
-  const editable = node.kind === 'user' && data.messageId !== undefined
+  // The edit follows the human source, not the Node kind: a sentence the person
+  // sent still reads as steering when the Turn admits it after opening, and a
+  // stopped Turn is exactly when they want to correct it. An open Turn is still
+  // answering the prompt, and work it already did outside the log cannot be
+  // undone, so editing waits until the Turn closes.
+  const editable = data.messageId !== undefined
     && turn?.status === 'closed' && isHumanPrompt(data.source)
   const [draft, setDraft] = useState<string | null>(null)
   const [refusal, setRefusal] = useState<string | null>(null)

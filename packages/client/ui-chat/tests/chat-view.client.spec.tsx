@@ -3676,6 +3676,30 @@ describe('ChatView', () => {
     })
   })
 
+  it('rewrites a prompt a closed Turn admitted as steering', async () => {
+    // Stopping a Turn leaves the sentence the person sent standing as a steering
+    // Node, and rewriting that sentence is just what the edit is for.
+    const steered: SteeringMessageNode & { turn: number } = {
+      ...steering(2, 'change direction', 1),
+      source: { kind: 'user' },
+    }
+    const h = makeHarness({
+      nodes: [userInTurn(1, 'first ask', 1), steered, assistant(3, 'answer')],
+      turnEnds: new Map([[1, 4]]),
+    })
+    const view = render(<h.ChatView {...h.props} />)
+    const row = view.container.querySelector<HTMLElement>('[data-chat-flow-kind="steering"]')
+    expect(row).not.toBeNull()
+    fireEvent.click(within(row!).getByRole('button', { name: '编辑消息' }))
+    const field = within(row!).getByRole('textbox', { name: '编辑这条消息' })
+    h.editAt.mockResolvedValueOnce({ refusal: null, cleared: 0 })
+    fireEvent.change(field, { target: { value: 'corrected direction' } })
+    fireEvent.keyDown(field, { key: 'Enter', ctrlKey: true })
+    await waitFor(() => {
+      expect(h.editAt.mock.calls).toEqual([[2, [{ type: 'text', text: 'corrected direction' }]]])
+    })
+  })
+
   it('offers no prompt edit while its Turn is still running', () => {
     const prompt: UserMessageNode = {
       kind: 'user',
