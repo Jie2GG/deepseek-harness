@@ -131,4 +131,28 @@ describe('editMessage', () => {
     expect(texts).toContain('corrected ask')
     expect(texts).not.toContain('queued follow-up')
   })
+  it("keeps the queued rewrite's splice pair replayable across the edit boundary", async () => {
+    const ctx = await harness(new MockAdapter([textResponse('first answer'), textResponse('second answer')]))
+    const agent = await createdAgent(ctx, SessionId('edit-splice-pair'))
+    send(agent, 'original ask')
+    await waitForIdle(ctx, agent)
+    const targetSeq = firstPromptSeq(agent)
+
+    agent.editMessage({
+      targetSeq: SessionSeq(targetSeq),
+      content: [{ type: 'text', text: 'corrected ask' }],
+    })
+    await waitForIdle(ctx, agent)
+
+    // The edit voids the prompt and its answer, so the rewrite is queued inside that range and
+    // claimed after it opens. A rewind that skipped the queueing splice would leave the claim
+    // removing from an empty list, reject the fold, and end the rerun Turn in error.
+    const endings = agent.session.snapshotEvents()
+      .filter(event => event.type === 'turn/end')
+      .map(event => event.type === 'turn/end' ? event.data.reason.kind : '')
+    expect(endings).toEqual(['completed', 'completed'])
+    const projections = ctx.sessionProjections.snapshot(agent.session)
+    expect(projections.values.inbox).toEqual({ 'next-turn': [], 'next-step': [] })
+    expect(textOf(agent)).toContain('corrected ask')
+  })
 })

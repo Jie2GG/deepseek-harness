@@ -77,11 +77,14 @@ interface ProjectionDefinition<K extends string, S> {
    * Whether a human-message edit rewinds this unit. When true, events inside an
    * edit's voided range contribute nothing to the value: the unit's state equals
    * what the log folded to immediately before the rewritten message, then
-   * replays forward from the edit. Use true for state a rewritten conversation
-   * re-creates — task lists, goals, team boards. Leave false for settings the
-   * conversation does not own, such as the effective directory, permission
-   * preset, selected model, turn numbering, titles, and metering: an edit to an
-   * earlier sentence does not undo a later choice the user still holds.
+   * replays forward from the edit. Only a unit whose events each carry complete
+   * post-change state may set true; a record that names a position and a count
+   * (the pending inbox splice) is split from its partner by the range boundary
+   * and would reject the replay. Leave false for settings the conversation does
+   * not own — effective directory, permission preset, selected model, turn
+   * numbering, titles, metering — and for any positional or sequence-dependent
+   * fold. An accepted edit clears stale pending input with its own durable
+   * record, so excluding the inbox costs no correctness.
    * @default false
    */
   rewindable?: boolean
