@@ -21,7 +21,6 @@ import type { DesktopChannelRowInjected, DesktopChannelToastInjected } from '../
 import type { DesktopChannelBridge } from '../src/types.ts'
 import { GeneralSection } from '../src/client/GeneralSection.tsx'
 import { SettingsDocumentAction } from '../src/client/SettingsDocumentAction.tsx'
-import { SignOutAction } from '../src/client/SignOutAction.tsx'
 import type { SettingsDocumentActionInjected } from '../src/client/SettingsDocumentAction.tsx'
 
 const SELF = '@deepseek-ai/dsh-client-ui-settings-general'
@@ -36,7 +35,7 @@ const NS = 'settings'
 const SEATS = [
   ['settings.trigger', TriggerContent],
   ['settings.header', HeaderContent],
-  ['settings.action', SignOutAction],
+  ['settings.action', SettingsDocumentAction],
   ['settings.close', CloseLabel],
   ['settings.section', GeneralSection],
 ] as const
@@ -261,9 +260,7 @@ describe('ui-settings-general apply', () => {
     // subscription), not re-registration.
     SEATS.forEach(([name], i) => {
       expect(c.ctx.slots.getVersion(name)).toBe(zhVersions[i]!)
-      // The action seat holds two rows of this package: the native document
-      // action and the page's sign-out command.
-      expect(ownEntries(c, name)).toHaveLength(name === 'settings.action' ? 2 : 1)
+      expect(ownEntries(c, name)).toHaveLength(1)
     })
     expect(generalLabel(c)).toBe('General')
     await vi.waitFor(() => {
@@ -303,9 +300,9 @@ describe('ui-settings-general apply', () => {
     // The stored Host locale applies off-loopback; only the native document
     // action stays loopback-only.
     expect(c.ctx.locale.getSnapshot().active).toBe('zh')
-    // The page-owned sign-out command stays; only the native document action is
-    // loopback-only.
-    expect(ownEntries(c, 'settings.action').map(entry => entry.component)).toEqual([SignOutAction])
+    // Off-loopback the native document action is withheld, leaving no row of this
+    // package in the header action seat.
+    expect(ownEntries(c, 'settings.action')).toEqual([])
     const english = localeView('en', 1)
     settings.mutate.mockResolvedValueOnce(ok(english))
     c.ctx.locale.setLocale('en')

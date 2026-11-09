@@ -433,8 +433,11 @@ describe('password session generations', () => {
     const auth = await BrowserAuth.create({}, provider, 30, passwords)
     const signed = cookiePair(auth.issueBrowserCookie('127.0.0.1:3080', passwords.epoch, false))
     const launched = cookiePair(auth.issueBrowserCookie('127.0.0.1:3080', LAUNCH_EPOCH, false))
-    expect(auth.browserSessionKind(request('/', '127.0.0.1:3080', { cookie: signed }))).toBe('password')
-    expect(auth.browserSessionKind(request('/', '127.0.0.1:3080', { cookie: launched }))).toBe('launch')
+    expect(auth.browserSession(request('/', '127.0.0.1:3080', { cookie: signed })).kind).toBe('password')
+    expect(auth.browserSession(request('/', '127.0.0.1:3080', { cookie: launched })).kind).toBe('launch')
+    // A request with no accepted cookie reports no expiry rather than a false date.
+    expect(auth.browserSession(request('/', '127.0.0.1:3080', { cookie: 'other=value' })))
+      .toEqual({ kind: 'password', expiresAt: 0 })
     const before = passwords.epoch
     expect(await passwords.rotateSession()).toBe(true)
     expect(passwords.epoch).not.toBe(before)

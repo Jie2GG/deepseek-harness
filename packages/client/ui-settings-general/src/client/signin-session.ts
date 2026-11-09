@@ -12,6 +12,8 @@ export interface SigninReply {
   hasPassword?: boolean
   /** Which session the caller presents: a password sign-in or a launch token. */
   sessionKind?: 'launch' | 'password'
+  /** When that session stops working, as epoch milliseconds. */
+  expiresAt?: number
 }
 
 /** Outcome of one request: the HTTP status, or zero when it never answered. */

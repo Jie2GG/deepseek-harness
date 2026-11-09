@@ -360,20 +360,25 @@ describe('the signed-in account endpoints', () => {
   it('report the account and which kind of session is in use', async () => {
     const host = await harness({ password: PASSWORD })
     const signed = cookieOf(await host.serve('login', login('dsh', PASSWORD)))
-    expect(reply(await host.serve('state', request({ cookie: signed })))).toEqual({
+    const state = reply(await host.serve('state', request({ cookie: signed })))
+    expect(state).toMatchObject({
       ok: true,
       username: 'dsh',
       hasPassword: true,
       sessionKind: 'password',
     })
+    // The account panel tells its reader how long this session still lasts.
+    expect(Number(state.expiresAt)).toBeGreaterThan(Date.now())
     const fresh = await harness()
     const launched = pair(fresh.auth.issueBrowserCookie(AUTHORITY, LAUNCH_EPOCH, false))
-    expect(reply(await fresh.serve('state', request({ cookie: launched })))).toEqual({
+    const launchState = reply(await fresh.serve('state', request({ cookie: launched })))
+    expect(launchState).toMatchObject({
       ok: true,
       username: 'dsh',
       hasPassword: false,
       sessionKind: 'launch',
     })
+    expect(Number(launchState.expiresAt)).toBeGreaterThan(Date.now())
   })
 
   it('changes the password only for the browser that proves the current one', async () => {
@@ -386,6 +391,7 @@ describe('the signed-in account endpoints', () => {
       body: 'not-json{',
     }))).status).toBe(400)
     expect((await host.serve('change', post({}))).status).toBe(400)
+    expect((await host.serve('change', post({ username: 'dsh' }))).status).toBe(400)
     const wrongOld = await host.serve('change', post({
       currentPassword: 'not-the-password-1', password: 'fresh-horse-battery', confirmPassword: 'fresh-horse-battery',
     }))

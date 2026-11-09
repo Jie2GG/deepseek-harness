@@ -453,18 +453,23 @@ export class BrowserAuth {
   }
 
   /**
-   * Classify the browser session one authenticated request presents.
-   * @param request - request headers carrying Host and Cookie of a sign-in this
-   * Host admitted.
+   * Describe the browser session one request presents, for the account panel.
+   * @param request - request headers carrying Host and Cookie.
    * @param secure - whether the receiving listener serves TLS.
-   * @returns `launch` for a token exchange, or `password` for a sign-in backed by
-   * the live password session generation.
+   * @returns whether the session came from a launch token or from the live password
+   * generation, plus the signed expiry the cookie carries; the expiry is zero for a
+   * request whose browser cookie this activation does not accept.
    */
-  browserSessionKind(request: ConnectionTrustRequest, secure = false): 'launch' | 'password' {
+  browserSession(
+    request: ConnectionTrustRequest,
+    secure = false,
+  ): { kind: 'launch' | 'password'; expiresAt: number } {
     const payload = this.authenticate(request, secure)
-    return payload?.version === COOKIE_PAYLOAD_VERSION && payload.epoch === LAUNCH_EPOCH
-      ? 'launch'
-      : 'password'
+    const signed = payload?.version === COOKIE_PAYLOAD_VERSION ? payload : undefined
+    return {
+      kind: signed?.epoch === LAUNCH_EPOCH ? 'launch' : 'password',
+      expiresAt: signed?.expiresAt ?? 0,
+    }
   }
 
   /**

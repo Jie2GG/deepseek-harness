@@ -45,7 +45,7 @@ kind: "package-reference"
 
 ### Web 页面上的本机登录
 
-设置导航里的 **本机登录** 条目只出现在由 Host 持有浏览器会话的页面上。它经 `POST /auth/state` 读取账号与口令状态，通过 `POST /auth/change` 修改账号名与口令——Host 还没有口令时改向 `POST /auth/setup` 提交——并用 `POST /auth/revoke` 登出其他所有靠口令登录的浏览器，该操作要先按一次、再按一次才生效。自带载体的客户端（例如 Desktop）没有浏览器会话：既不注册该分区，设置里的 **退出登录** 入口也按同一条规则隐藏。这些端点、它们的应答以及被轮换的会话代次属于 [`dsh-client-connection`](../connection/README.zh.md#browser-authentication-and-request-trust)。
+设置导航里的 **本机登录** 条目只出现在由 Host 持有浏览器会话的页面上。它先把已登录的账号摆在最前面——账号名、这次会话是怎么进来的、还能用多久——点这一行进入修改视图，在那里通过 `POST /auth/change` 改账号名与口令（Host 还没有口令时改向 `POST /auth/setup` 提交）。账号行下面是两条出口：`POST /auth/revoke` 在二次确认后登出其他所有靠口令登录的浏览器，**退出登录** 结束本浏览器的会话；两个动作都留在这个分区里，而不是挂在面板右上角，所以“谁登录着、怎么退出”集中在一处。自带载体的客户端（例如 Desktop）没有浏览器会话，也就不注册该分区。这些端点、它们的应答以及被轮换的会话代次属于 [`dsh-client-connection`](../connection/README.zh.md#browser-authentication-and-request-trust)。
 
 ### 「通用」分区
 

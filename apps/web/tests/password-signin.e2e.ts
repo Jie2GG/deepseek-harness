@@ -75,6 +75,8 @@ it('sets the first password, edits it in Settings, and signs other browsers out'
   await openSettings(owner, 'en')
   const dialog = owner.getByRole('dialog', { name: 'Settings', exact: true })
   await dialog.getByRole('button', { name: 'Browser sign-in', exact: true }).click()
+  // The panel leads with the signed-in account; the edit view sits behind that row.
+  await dialog.getByRole('button', { name: 'Edit account and password' }).click()
   await dialog.getByLabel('Account name', { exact: true }).waitFor({ timeout: 30_000 })
   await dialog.getByLabel('Current password', { exact: true }).fill(WRONG)
   await dialog.getByLabel('New password', { exact: true }).fill(ROTATED)

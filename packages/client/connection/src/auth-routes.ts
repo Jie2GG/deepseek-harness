@@ -75,6 +75,8 @@ interface AuthReply {
   hasPassword?: boolean
   /** Which kind of browser session the caller presents. */
   sessionKind?: 'launch' | 'password'
+  /** When that session stops working, as epoch milliseconds. */
+  expiresAt?: number
 }
 
 function headerOf(request: IncomingMessage, name: string): string | undefined {
@@ -191,11 +193,13 @@ export function createAuthHandler(
       return
     }
     if (kind === 'state') {
+      const session = deps.auth.browserSession(req, secure)
       replyJson(res, 200, {
         ok: true,
         username: deps.passwords.accountName,
         hasPassword: deps.passwords.isSet,
-        sessionKind: deps.auth.browserSessionKind(req, secure),
+        sessionKind: session.kind,
+        expiresAt: session.expiresAt,
       })
       return
     }

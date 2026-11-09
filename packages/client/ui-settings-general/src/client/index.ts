@@ -43,7 +43,6 @@ import { GeneralSection } from './GeneralSection.tsx'
 import { CurrentVersionRow } from './CurrentVersionRow.tsx'
 import { DeveloperToolsRow, type DeveloperToolsRowInjected } from './DeveloperToolsRow.tsx'
 import { SettingsDocumentAction } from './SettingsDocumentAction.tsx'
-import { SignOutAction } from './SignOutAction.tsx'
 import { SignInSection } from './SignInSection.tsx'
 import type { SignInSectionInjected } from './SignInSection.tsx'
 import type { SettingsDocumentActionInjected } from './SettingsDocumentAction.tsx'
@@ -265,15 +264,6 @@ export function apply(ctx: ClientContext): void {
       inject: documentInjected,
     }, SettingsDocumentAction))
   }
-  // The sign-out command exists only for a served page; the action hides itself
-  // for a carrier that owns its own session.
-  ctx.slots.inject('settings.action', () => ctx.slots.register({
-    name: 'settings.action',
-    id: 'sign-out',
-    order: 1,
-    locale: NS,
-    inject: () => ({ signOut: connection.signOut }),
-  }, SignOutAction))
   ctx.slots.inject('settings.close', () =>
     ctx.slots.register({ name: 'settings.close', locale: NS }, CloseLabel))
   ctx.slots.inject('settings.section', () => ctx.slots.register({
