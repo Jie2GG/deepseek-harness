@@ -74,7 +74,7 @@ it('sets the first password, edits it in Settings, and signs other browsers out'
   // password first. That rotates the session generation every other browser rides.
   await openSettings(owner, 'en')
   const dialog = owner.getByRole('dialog', { name: 'Settings', exact: true })
-  await dialog.getByRole('button', { name: 'Browser sign-in', exact: true }).click()
+  await dialog.getByRole('button', { name: 'Sign-in', exact: true }).click()
   // The panel leads with the signed-in account; the edit view sits behind that row.
   await dialog.getByRole('button', { name: 'Edit account and password' }).click()
   await dialog.getByLabel('Account name', { exact: true }).waitFor({ timeout: 30_000 })

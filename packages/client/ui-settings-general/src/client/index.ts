@@ -274,15 +274,16 @@ export function apply(ctx: ClientContext): void {
     locale: NS,
     children: { 'settings.general.item': { kind: 'list', scope: 'root' } },
   }, GeneralSection))
-  // The sign-in secret belongs to the Host that served this page. A carrier that
-  // owns its transport has no browser session here, so the section is absent.
+  // Deployment-level sign-in comes before everyday preferences, so this row sits directly
+  // above General. The secret belongs to the Host that served the page: a carrier that owns
+  // its transport, such as Desktop, has no browser session here and registers nothing.
   const signOut = connection.signOut
   /* v8 ignore next -- only a served page reaches this package with a browser session. */
   if (signOut !== undefined) {
     ctx.slots.inject('settings.section', () => ctx.slots.register({
       name: 'settings.section',
       id: 'signin',
-      order: 900,
+      order: -1,
       label: () => t('signin.nav'),
       locale: NS,
       inject: (): SignInSectionInjected => ({ signOut }),
