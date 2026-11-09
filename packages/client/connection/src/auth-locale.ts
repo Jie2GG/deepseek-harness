@@ -3,11 +3,9 @@
 /** Every language the page renders, matching the shipped UI languages. */
 export const authEn = {
   language: 'en',
-  brandName: 'DeepSeek Harness',
   subtitle: 'Use the account and password created on this machine.',
   setupSubtitle: 'Choose the password that protects this Host.',
   signingIn: 'Signing in…',
-  hostHint: 'This sign-in protects {host}.',
   title: 'Sign in to DeepSeek Harness',
   setupTitle: 'Set a password to start',
   usernameLabel: 'Account name',
@@ -35,11 +33,9 @@ export const authEn = {
 /** Simplified Chinese page copy. */
 export const authZh = {
   language: 'zh',
-  brandName: 'DeepSeek Harness',
   subtitle: '使用这台机器上创建的账号和密码。',
   setupSubtitle: '为这个 Host 选择一个保护口令。',
   signingIn: '正在登录…',
-  hostHint: '此登录保护 {host}。',
   title: '登录 DeepSeek Harness',
   setupTitle: '先设置一个密码',
   usernameLabel: '账号',
@@ -67,11 +63,9 @@ export const authZh = {
 /** Japanese page copy. */
 export const authJa = {
   language: 'ja',
-  brandName: 'DeepSeek Harness',
   subtitle: 'このマシンで作成したアカウントとパスワードを入力します。',
   setupSubtitle: 'この Host を保護するパスワードを選びます。',
   signingIn: 'サインイン中…',
-  hostHint: 'このサインインは {host} を保護します。',
   title: 'DeepSeek Harness にサインイン',
   setupTitle: '開始前にパスワードを設定',
   usernameLabel: 'アカウント名',
@@ -99,11 +93,9 @@ export const authJa = {
 /** Spanish page copy. */
 export const authEs = {
   language: 'es',
-  brandName: 'DeepSeek Harness',
   subtitle: 'Usa la cuenta y la contraseña creadas en esta máquina.',
   setupSubtitle: 'Elige la contraseña que protegerá este Host.',
   signingIn: 'Iniciando sesión…',
-  hostHint: 'Esta sesión protege {host}.',
   title: 'Inicia sesión en DeepSeek Harness',
   setupTitle: 'Establece una contraseña para empezar',
   usernameLabel: 'Nombre de cuenta',
@@ -131,11 +123,9 @@ export const authEs = {
 /** French page copy. */
 export const authFr = {
   language: 'fr',
-  brandName: 'DeepSeek Harness',
   subtitle: 'Utilisez le compte et le mot de passe créés sur cette machine.',
   setupSubtitle: 'Choisissez le mot de passe qui protégera ce Host.',
   signingIn: 'Connexion…',
-  hostHint: 'Cette connexion protège {host}.',
   title: 'Se connecter à DeepSeek Harness',
   setupTitle: 'Définissez un mot de passe pour commencer',
   usernameLabel: 'Nom de compte',
@@ -163,11 +153,9 @@ export const authFr = {
 /** German page copy. */
 export const authDe = {
   language: 'de',
-  brandName: 'DeepSeek Harness',
   subtitle: 'Verwenden Sie das auf diesem Rechner angelegte Konto und Passwort.',
   setupSubtitle: 'Wählen Sie das Passwort, das diesen Host schützt.',
   signingIn: 'Anmeldung läuft…',
-  hostHint: 'Diese Anmeldung schützt {host}.',
   title: 'Bei DeepSeek Harness anmelden',
   setupTitle: 'Passwort zum Start festlegen',
   usernameLabel: 'Kontoname',
@@ -195,11 +183,9 @@ export const authDe = {
 /** Russian page copy. */
 export const authRu = {
   language: 'ru',
-  brandName: 'DeepSeek Harness',
   subtitle: 'Используйте учётную запись и пароль, созданные на этой машине.',
   setupSubtitle: 'Выберите пароль, который будет защищать этот Host.',
   signingIn: 'Вход выполняется…',
-  hostHint: 'Этот вход защищает {host}.',
   title: 'Вход в DeepSeek Harness',
   setupTitle: 'Задайте пароль для начала',
   usernameLabel: 'Имя учётной записи',
@@ -227,11 +213,9 @@ export const authRu = {
 /** Portuguese page copy. */
 export const authPt = {
   language: 'pt',
-  brandName: 'DeepSeek Harness',
   subtitle: 'Use a conta e a senha criadas nesta máquina.',
   setupSubtitle: 'Escolha a senha que protegerá este Host.',
   signingIn: 'Entrando…',
-  hostHint: 'Esta entrada protege {host}.',
   title: 'Entre no DeepSeek Harness',
   setupTitle: 'Defina uma senha para começar',
   usernameLabel: 'Nome da conta',

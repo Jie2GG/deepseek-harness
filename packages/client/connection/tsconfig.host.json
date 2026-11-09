@@ -11,6 +11,7 @@
     "src/auth-locale.ts",
     "src/auth-page.ts",
     "src/auth-routes.ts",
+    "src/auth-stage.ts",
     "src/browser-auth.ts",
     "src/client/random-uuid.ts",
     "src/client/rpc.ts",

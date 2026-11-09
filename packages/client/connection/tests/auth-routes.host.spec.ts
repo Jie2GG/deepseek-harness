@@ -538,6 +538,8 @@ describe('sign-in lifetime choice and failure counts', () => {
 describe('the sign-in form controls', () => {
   it('offers a confirm entry only while setting a password', () => {
     const setup = renderAuthPage(authEn, 'set-password', 'dsh', false)
+    expect(setup).toContain('id="dsw-stage"')
+    expect(setup).toContain('new Path2D(')
     expect(setup).toContain('>' + authEn.confirmLabel + '<')
     expect(setup).toContain('id="c" name="confirm"')
     expect(setup).toContain(authEn.rememberLabel)
