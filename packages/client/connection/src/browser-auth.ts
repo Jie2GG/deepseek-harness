@@ -156,10 +156,15 @@ function sessionCookie(
   name: string,
   value: string,
   expiresAt: number,
-  maxAgeSeconds: number,
+  maxAgeSeconds: number | undefined,
   secure: boolean,
 ): string {
-  const attributes = `${name}=${value}; Max-Age=${String(maxAgeSeconds)}; Path=/; Expires=${new Date(expiresAt).toUTCString()}; HttpOnly; SameSite=Strict`
+  // An undefined lifetime omits both dated attributes, so the browser drops the
+  // cookie when it closes: the sign-in lasts that session and no longer.
+  const dated = maxAgeSeconds === undefined
+    ? ''
+    : `Max-Age=${String(maxAgeSeconds)}; Expires=${new Date(expiresAt).toUTCString()}; `
+  const attributes = `${name}=${value}; ${dated}Path=/; HttpOnly; SameSite=Strict`
   return secure ? `${attributes}; Secure` : attributes
 }
 
@@ -283,17 +288,31 @@ export class BrowserAuth {
   }
 
   /**
-   * Serialize a signed browser-session cookie for one password generation.
+   * Serialize a signed browser-session cookie for one session generation.
    * @param authority - cookie audience the request was addressed to.
-   * @param epoch - password generation, or {@link LAUNCH_EPOCH} for a token exchange.
+   * @param epoch - password session generation, or {@link LAUNCH_EPOCH} for a token exchange.
    * @param secure - whether the receiving listener serves TLS.
+   * @param remember - true writes the dated attributes so the sign-in survives a
+   * browser restart; false leaves a browser-session cookie. Either way the signed
+   * payload still expires at the configured absolute ceiling.
    * @returns the full `Set-Cookie` value.
    */
-  issueBrowserCookie(authority: string, epoch: string, secure: boolean): string {
+  issueBrowserCookie(
+    authority: string,
+    epoch: string,
+    secure: boolean,
+    remember = true,
+  ): string {
     const issuedAt = Date.now()
     const expiresAt = issuedAt + this.maxAgeMilliseconds
     const value = encodeCookie({ version: COOKIE_PAYLOAD_VERSION, authority, issuedAt, expiresAt, epoch }, this.secret)
-    return sessionCookie(cookieName(authority), value, expiresAt, Math.floor(this.maxAgeMilliseconds / 1000), secure)
+    return sessionCookie(
+      cookieName(authority),
+      value,
+      expiresAt,
+      remember ? Math.floor(this.maxAgeMilliseconds / 1000) : undefined,
+      secure,
+    )
   }
 
   /**
@@ -431,6 +450,21 @@ export class BrowserAuth {
     const payload = this.authenticate(request, secure)
     if (payload === undefined || payload.version !== COOKIE_PAYLOAD_VERSION) return false
     return payload.epoch === LAUNCH_EPOCH || payload.epoch === this.passwords.epoch
+  }
+
+  /**
+   * Classify the browser session one authenticated request presents.
+   * @param request - request headers carrying Host and Cookie of a sign-in this
+   * Host admitted.
+   * @param secure - whether the receiving listener serves TLS.
+   * @returns `launch` for a token exchange, or `password` for a sign-in backed by
+   * the live password session generation.
+   */
+  browserSessionKind(request: ConnectionTrustRequest, secure = false): 'launch' | 'password' {
+    const payload = this.authenticate(request, secure)
+    return payload?.version === COOKIE_PAYLOAD_VERSION && payload.epoch === LAUNCH_EPOCH
+      ? 'launch'
+      : 'password'
   }
 
   /**

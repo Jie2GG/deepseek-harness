@@ -7,7 +7,9 @@ import { credentialKey, type CredentialProvider, type CredentialRecord } from '@
 const PASSWORD_RECORD_KEY = credentialKey('client-connection', 'password')
 
 /** Payload version this Harness build writes. */
-const PASSWORD_RECORD_VERSION = 1
+const PASSWORD_RECORD_VERSION = 2
+/** Payload version earlier builds wrote; it stays readable and cannot rotate sessions. */
+const LEGACY_PASSWORD_RECORD_VERSION = 1
 /** Protocol-fixed scrypt parameters; changing them invalidates every stored digest. */
 const SCRYPT_COST = 16_384
 const SCRYPT_BLOCK_SIZE = 8
@@ -26,6 +28,8 @@ const SCRYPT_OPTIONS = {
 const DIGEST_SEPARATOR = '$'
 /** Bytes of the stored record digest that seed the cookie generation. */
 const EPOCH_BYTES = 8
+/** Random bytes behind one session rotation. */
+const SESSION_EPOCH_BYTES = 32
 const MINIMUM_PASSWORD_CHARACTERS = 8
 const MAXIMUM_PASSWORD_CHARACTERS = 256
 const MAXIMUM_USERNAME_CHARACTERS = 128
@@ -50,14 +54,25 @@ function scryptDerive(password: Buffer, salt: Buffer): Promise<Buffer> {
 }
 
 /** Owner-defined JSON inside the stored grant record. */
-interface PasswordPayload {
-  /** Discriminant the provider preserves for the owner. */
-  readonly version: typeof PASSWORD_RECORD_VERSION
-  /** Account name paired with the digest at the time it was set. */
-  readonly username: string
-  /** `scrypt$<cost>$<blockSize>$<parallelism>$<salt>$<digest>`, all base64url. */
-  readonly digest: string
-}
+type PasswordPayload =
+  | {
+    /** Discriminant of a record an earlier build wrote. */
+    readonly version: typeof LEGACY_PASSWORD_RECORD_VERSION
+    /** Account name paired with the digest at the time it was set. */
+    readonly username: string
+    /** `scrypt$<cost>$<blockSize>$<parallelism>$<salt>$<digest>`, all base64url. */
+    readonly digest: string
+  }
+  | {
+    /** Discriminant the provider preserves for the owner. */
+    readonly version: typeof PASSWORD_RECORD_VERSION
+    /** Account name paired with the digest at the time it was set. */
+    readonly username: string
+    /** `scrypt$<cost>$<blockSize>$<parallelism>$<salt>$<digest>`, all base64url. */
+    readonly digest: string
+    /** Replaced whenever this Host must reject every password-signed browser session. */
+    readonly sessionEpoch: string
+  }
 
 /** One parsed login secret together with the generation its readers pin. */
 interface StoredPassword {
@@ -141,6 +156,14 @@ function epochOf(payload: PasswordPayload): string {
   return createHash('sha256').update(JSON.stringify(payload)).digest().subarray(0, EPOCH_BYTES).toString('base64url')
 }
 
+/**
+ * Draw a fresh session generation.
+ * @returns random bytes that make every earlier password-signed cookie fail to match.
+ */
+function newSessionEpoch(): string {
+  return randomBytes(SESSION_EPOCH_BYTES).toString('base64url')
+}
+
 /** Whether one stored payload is a JSON object this parser can read. */
 function isPayload(value: unknown): value is Record<PropertyKey, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
@@ -157,7 +180,7 @@ function parseRecord(record: CredentialRecord | undefined): StoredPassword | und
     throw new Error('client-connection: password credential record has an unsupported format')
   }
   const payload = record.payload
-  if (payload.version !== PASSWORD_RECORD_VERSION) {
+  if (payload.version !== PASSWORD_RECORD_VERSION && payload.version !== LEGACY_PASSWORD_RECORD_VERSION) {
     throw new Error('client-connection: password credential record has an unsupported format')
   }
   const { username, digest } = payload
@@ -165,7 +188,17 @@ function parseRecord(record: CredentialRecord | undefined): StoredPassword | und
     || !isUsableUsername(username) || !digest.startsWith(`scrypt${DIGEST_SEPARATOR}`)) {
     throw new Error('client-connection: password credential record has an invalid secret')
   }
-  const parsed: PasswordPayload = { version: PASSWORD_RECORD_VERSION, username, digest }
+  if (payload.version === LEGACY_PASSWORD_RECORD_VERSION) {
+    // A version-1 record hashes to the generation its live cookies already carry,
+    // so upgrading this build signs nobody out before the password or session changes.
+    const legacy: PasswordPayload = { version: LEGACY_PASSWORD_RECORD_VERSION, username, digest }
+    return { payload: legacy, epoch: epochOf(legacy) }
+  }
+  const sessionEpoch = payload.sessionEpoch
+  if (typeof sessionEpoch !== 'string' || sessionEpoch.length === 0) {
+    throw new Error('client-connection: password credential record has an invalid secret')
+  }
+  const parsed: PasswordPayload = { version: PASSWORD_RECORD_VERSION, username, digest, sessionEpoch }
   return { payload: parsed, epoch: epochOf(parsed) }
 }
 
@@ -220,6 +253,7 @@ export class PasswordStore {
       version: PASSWORD_RECORD_VERSION,
       username,
       digest: await deriveDigest(password),
+      sessionEpoch: newSessionEpoch(),
     }
     const written = await this.credentials.modifyRecord(PASSWORD_RECORD_KEY, current =>
       current === undefined
@@ -228,6 +262,61 @@ export class PasswordStore {
     const stored = parseRecord(written) ?? { payload, epoch: epochOf(payload) }
     this.current = stored
     return stored.payload.digest === payload.digest ? 'created' : 'already-set'
+  }
+
+  /**
+   * Replace the login secret once the current one proves the caller's right.
+   * The account name changes in the same write when the caller supplied a new one,
+   * and the fresh session generation signs out every other password-signed browser.
+   * @param currentPassword - plaintext as submitted, checked against the stored digest.
+   * @param username - account name to store from now on.
+   * @param password - plaintext to digest.
+   * @returns `changed`, `wrong-password` when the current secret did not match, or
+   * `unavailable` when this Host holds no secret to replace.
+   */
+  async change(
+    currentPassword: string,
+    username: string,
+    password: string,
+  ): Promise<'changed' | 'wrong-password' | 'unavailable'> {
+    const stored = this.current
+    if (stored === undefined) return 'unavailable'
+    if (!await digestMatches(currentPassword, stored.payload.digest)) return 'wrong-password'
+    const written = await this.writeRotated(username, await deriveDigest(password))
+    this.current = written === undefined ? undefined : parseRecord(written)
+    return written === undefined ? 'unavailable' : 'changed'
+  }
+
+  /**
+   * Replace the session generation while leaving the password itself usable.
+   * @returns true when a record existed to rotate; every earlier password-signed
+   * cookie fails afterwards, and a launch-token or API cookie keeps working.
+   */
+  async rotateSession(): Promise<boolean> {
+    const stored = this.current
+    if (stored === undefined) return false
+    const written = await this.writeRotated(stored.payload.username, stored.payload.digest)
+    this.current = written === undefined ? undefined : parseRecord(written)
+    return written !== undefined
+  }
+  /**
+   * Replace the stored secret with a fresh session generation, which retires every
+   * earlier password-signed cookie while leaving the digest usable.
+   * @param username - account name to store.
+   * @param digest - self-describing digest to store.
+   * @returns the stored record, or undefined when no record was left to replace.
+   */
+  private async writeRotated(username: string, digest: string): Promise<CredentialRecord | undefined> {
+    const payload: PasswordPayload = {
+      version: PASSWORD_RECORD_VERSION,
+      username,
+      digest,
+      sessionEpoch: newSessionEpoch(),
+    }
+    return this.credentials.modifyRecord(PASSWORD_RECORD_KEY, current =>
+      current === undefined
+        ? Promise.resolve(undefined)
+        : Promise.resolve({ kind: 'grant', payload } satisfies CredentialRecord))
   }
 
   /**

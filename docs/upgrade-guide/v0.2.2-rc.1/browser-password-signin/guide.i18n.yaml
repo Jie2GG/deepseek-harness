@@ -3,14 +3,14 @@
 # After editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write docs/upgrade-guide/v0.2.2-rc.1/browser-password-signin/guide.md
 /:
-  en: 89167bf005fc0aed
-  zh: 2185acd80ccaf273
+  en: ac1d7c7a37fc7e1c
+  zh: 82874b7a94eca747
 /browser-sign-in-with-an-account-name-and-password:
   en: d38a396869728b24
-  zh: 71dc1bd3a6220817
+  zh: 7bc5e0d5c061bfbd
 /browser-sign-in-with-an-account-name-and-password/change:
-  en: b7a0ec4a1883e134
-  zh: 64109e7f496d9ebf
+  en: 50c54bb881ea63cf
+  zh: 98d44204151ca6d0
 /browser-sign-in-with-an-account-name-and-password/migration:
-  en: c6600bea2ca8d3c5
-  zh: c780a7b1ab3cd33c
+  en: a72a95fc754d051c
+  zh: e6c4a85551c8460f

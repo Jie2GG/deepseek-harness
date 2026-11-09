@@ -46,6 +46,15 @@ export class LoginThrottle {
   }
 
   /**
+   * Count the failed attempts one key has accumulated since its last success.
+   * @param key - caller-composed client and account identity.
+   * @returns failures held in memory, zero for a key that never failed.
+   */
+  failures(key: string): number {
+    return this.states.get(key)?.failures ?? 0
+  }
+
+  /**
    * Clear the wait after an accepted attempt.
    * @param key - caller-composed client and account identity.
    */

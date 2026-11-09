@@ -5,10 +5,10 @@ import { Readable } from 'node:stream'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { describe, expect, it, vi } from 'vitest'
 import { createAuthHandler, MAX_AUTH_REQUEST_BODY_BYTES, type AuthRouteDeps, type AuthRouteKind } from '../src/auth-routes.ts'
-import { BrowserAuth } from '../src/browser-auth.ts'
+import { BrowserAuth, LAUNCH_EPOCH } from '../src/browser-auth.ts'
 import { LoginThrottle } from '../src/login-throttle.ts'
 import { PasswordStore } from '../src/password-record.ts'
-import { authEn, authMessagesFor, withSeconds } from '../src/auth-locale.ts'
+import { authEn, authMessagesFor, withCount, withSeconds } from '../src/auth-locale.ts'
 import { pageCopy, renderAuthPage } from '../src/auth-page.ts'
 import { PASSWORD_KEY, RecordCredentials } from './browser-credentials.ts'
 
@@ -67,6 +67,8 @@ interface Harness {
   auth: BrowserAuth
   passwords: PasswordStore
   store: RecordCredentials
+  /** Every audit line the routes wrote, in order. */
+  logs: { level: 'info' | 'warn'; message: string }[]
   serve(kind: AuthRouteKind, req: IncomingMessage): Promise<Sent>
 }
 
@@ -87,18 +89,21 @@ async function harness(options: {
   if (options.password === undefined) await passwords.load()
   else await passwords.setup('dsh', options.password)
   const auth = await BrowserAuth.create({}, credentials, 30, passwords)
+  const logs: Harness['logs'] = []
   const deps: AuthRouteDeps = {
     auth,
     passwords,
     throttle: new LoginThrottle(),
     reject: () => options.rejection,
     secure: () => options.secure ?? false,
+    audit: (level, message) => { logs.push({ level, message }) },
   }
   return {
     deps,
     auth,
     passwords,
     store,
+    logs,
     serve: async (kind, req) => {
       const sink = response()
       await createAuthHandler(deps, kind)(req, sink.value)
@@ -134,7 +139,7 @@ describe('first password setup', () => {
       contentType: 'application/json; charset=utf-8',
     }))
     expect(sent.status).toBe(200)
-    expect(reply(sent)).toEqual({ ok: true })
+    expect(reply(sent)).toEqual({ ok: true, username: 'dsh' })
     expect(host.passwords.isSet).toBe(true)
     expect(host.passwords.accountName).toBe('dsh')
     expect(host.auth.isAuthenticated({ headers: { host: AUTHORITY, cookie: cookieOf(sent) } })).toBe(true)
@@ -220,7 +225,7 @@ describe('sign-in', () => {
       }
       const recovered = await host.serve('login', login('dsh', PASSWORD))
       expect(recovered.status).toBe(200)
-      expect(reply(recovered)).toEqual({ ok: true })
+      expect(reply(recovered)).toEqual({ ok: true, username: 'dsh' })
     } finally {
       vi.useRealTimers()
     }
@@ -236,8 +241,11 @@ describe('sign-in', () => {
     }
     expect(delays).toEqual([1_000, 2_000, 4_000, 8_000, 16_000, 30_000, 30_000, 30_000])
     expect(throttle.retryAfterMs('other', now)).toBe(0)
+    expect(throttle.failures('dsh')).toBe(8)
+    expect(throttle.failures('other')).toBe(0)
     expect(throttle.retryAfterMs('dsh', now + 29_000)).toBe(1_000)
     throttle.recordSuccess('dsh')
+    expect(throttle.failures('dsh')).toBe(0)
     expect(throttle.retryAfterMs('dsh', now)).toBe(0)
   })
 })
@@ -336,5 +344,207 @@ describe('page copy and rendering', () => {
     const tls = renderAuthPage(authEn, 'set-password', 'dsh', true)
     expect(tls).not.toContain(authEn.insecureNotice)
     expect(tls).toContain('autocomplete="new-password"')
+  })
+})
+describe('the signed-in account endpoints', () => {
+  it('refuse a browser that presents no sign-in', async () => {
+    const host = await harness({ password: PASSWORD })
+    for (const kind of ['state', 'change', 'revoke'] as const) {
+      const sent = await host.serve(kind, request({ body: {}, contentType: 'application/json' }))
+      expect(sent.status).toBe(401)
+      expect(reply(sent).message).toBe(authEn.sessionExpired)
+    }
+    expect(host.logs.at(-1)?.message).toContain('is not signed in')
+  })
+
+  it('report the account and which kind of session is in use', async () => {
+    const host = await harness({ password: PASSWORD })
+    const signed = cookieOf(await host.serve('login', login('dsh', PASSWORD)))
+    expect(reply(await host.serve('state', request({ cookie: signed })))).toEqual({
+      ok: true,
+      username: 'dsh',
+      hasPassword: true,
+      sessionKind: 'password',
+    })
+    const fresh = await harness()
+    const launched = pair(fresh.auth.issueBrowserCookie(AUTHORITY, LAUNCH_EPOCH, false))
+    expect(reply(await fresh.serve('state', request({ cookie: launched })))).toEqual({
+      ok: true,
+      username: 'dsh',
+      hasPassword: false,
+      sessionKind: 'launch',
+    })
+  })
+
+  it('changes the password only for the browser that proves the current one', async () => {
+    const host = await harness({ password: PASSWORD })
+    const cookie = cookieOf(await host.serve('login', login('dsh', PASSWORD)))
+    const post = (body: object) => request({ cookie, contentType: 'application/json', body })
+    expect((await host.serve('change', request({
+      cookie,
+      contentType: 'application/json',
+      body: 'not-json{',
+    }))).status).toBe(400)
+    expect((await host.serve('change', post({}))).status).toBe(400)
+    const wrongOld = await host.serve('change', post({
+      currentPassword: 'not-the-password-1', password: 'fresh-horse-battery', confirmPassword: 'fresh-horse-battery',
+    }))
+    expect(wrongOld.status).toBe(403)
+    expect(reply(wrongOld).message).toBe(authEn.wrongPassword)
+    expect(await host.passwords.verify('dsh', PASSWORD)).toBe(true)
+    const mismatch = await host.serve('change', post({
+      username: 'operator', currentPassword: PASSWORD, password: 'fresh-horse-battery', confirmPassword: 'nope-nope-nope',
+    }))
+    expect(mismatch.status).toBe(400)
+    expect(reply(mismatch).message).toBe(authEn.passwordMismatch)
+    const short = await host.serve('change', post({
+      currentPassword: PASSWORD, password: 'short', confirmPassword: 'short',
+    }))
+    expect(short.status).toBe(400)
+    expect(reply(short).message).toBe(authEn.passwordTooShort)
+    const blank = await host.serve('change', post({
+      username: '   ', currentPassword: PASSWORD, password: 'fresh-horse-battery', confirmPassword: 'fresh-horse-battery',
+    }))
+    expect(blank.status).toBe(400)
+    expect(reply(blank).message).toBe(authEn.requestFailed)
+    const kept = await host.serve('change', post({
+      currentPassword: PASSWORD, password: 'kept-horse-battery', confirmPassword: 'kept-horse-battery',
+    }))
+    expect(kept.status).toBe(200)
+    expect(kept.headers?.['set-cookie']).toContain('Max-Age=2592000')
+    expect(await host.passwords.verify('dsh', 'kept-horse-battery')).toBe(true)
+    const accepted = await host.serve('change', request({
+      cookie: cookieOf(kept),
+      contentType: 'application/json',
+      body: {
+        username: ' operator ', remember: false,
+        currentPassword: 'kept-horse-battery',
+        password: 'fresh-horse-battery', confirmPassword: 'fresh-horse-battery',
+      },
+    }))
+    expect(accepted.status).toBe(200)
+    expect(reply(accepted)).toEqual({ ok: true, username: 'operator', message: authEn.changedPassword })
+    expect(accepted.headers?.['set-cookie']).not.toContain('Max-Age')
+    expect(await host.passwords.verify('operator', 'fresh-horse-battery')).toBe(true)
+    // The edited browser rides the newest generation; every older password cookie fails.
+    expect(host.auth.isAuthenticated({ headers: { host: AUTHORITY, cookie: cookieOf(accepted) } })).toBe(true)
+    expect(host.auth.isAuthenticated({ headers: { host: AUTHORITY, cookie: cookieOf(kept) } })).toBe(false)
+    expect(host.auth.isAuthenticated({ headers: { host: AUTHORITY, cookie } })).toBe(false)
+    const lines = host.logs.map(line => line.message).join(' | ')
+    expect(lines).toContain('password changed for account operator')
+    expect(lines).not.toContain('not-the-password-1')
+    expect(lines).not.toContain('fresh-horse-battery')
+  })
+
+  it('refuses an account edit while no password exists', async () => {
+    const host = await harness()
+    const cookie = pair(host.auth.issueBrowserCookie(AUTHORITY, LAUNCH_EPOCH, false))
+    const sent = await host.serve('change', request({
+      cookie,
+      contentType: 'application/json',
+      body: { currentPassword: PASSWORD, password: 'fresh-horse-battery', confirmPassword: 'fresh-horse-battery' },
+    }))
+    expect(sent.status).toBe(409)
+    expect(reply(sent).message).toBe(authEn.needSetup)
+  })
+
+  it('signs out other password browsers while keeping this one', async () => {
+    const host = await harness({ password: PASSWORD })
+    const mine = cookieOf(await host.serve('login', login('dsh', PASSWORD)))
+    const theirs = cookieOf(await host.serve('login', request({
+      body: { username: 'dsh', password: PASSWORD }, contentType: 'application/json', address: '10.0.0.9',
+    })))
+    const launched = pair(host.auth.issueBrowserCookie(AUTHORITY, LAUNCH_EPOCH, false))
+    const out = await host.serve('revoke', request({ cookie: mine }))
+    expect(out.status).toBe(200)
+    expect(reply(out).message).toBe(authEn.revokedOthers)
+    for (const stale of [theirs, mine]) {
+      expect(host.auth.isAuthenticated({ headers: { host: AUTHORITY, cookie: stale } })).toBe(false)
+    }
+    expect(host.auth.isAuthenticated({ headers: { host: AUTHORITY, cookie: cookieOf(out) } })).toBe(true)
+    // A desktop or machine session that came in on the launch token is untouched.
+    expect(host.auth.isAuthenticated({ headers: { host: AUTHORITY, cookie: launched } })).toBe(true)
+    expect(host.logs.at(-1)?.message).toContain('signed out other devices')
+  })
+
+  it('has nothing to revoke while no password exists', async () => {
+    const host = await harness()
+    const cookie = pair(host.auth.issueBrowserCookie(AUTHORITY, LAUNCH_EPOCH, false))
+    const sent = await host.serve('revoke', request({ cookie }))
+    expect(sent.status).toBe(409)
+    expect(reply(sent).message).toBe(authEn.needSetup)
+  })
+})
+
+describe('sign-in lifetime choice and failure counts', () => {
+  it('trades a browser-session cookie when the form unchecks remember me', async () => {
+    const host = await harness({ password: PASSWORD, secure: true })
+    const dated = await host.serve('login', login('dsh', PASSWORD))
+    expect(dated.headers?.['set-cookie']).toContain('Max-Age=2592000')
+    const brief = await host.serve('login', request({
+      body: { username: 'dsh', password: PASSWORD, remember: false }, contentType: 'application/json',
+    }))
+    expect(brief.status).toBe(200)
+    expect(brief.headers?.['set-cookie']).not.toContain('Max-Age')
+    expect(brief.headers?.['set-cookie']).not.toContain('Expires')
+    expect(brief.headers?.['set-cookie']).toContain('Path=/; HttpOnly; SameSite=Strict; Secure')
+    const fresh = await harness()
+    const set = await fresh.serve('setup', request({
+      body: { username: 'dsh', password: PASSWORD, confirmPassword: PASSWORD, remember: false },
+      contentType: 'application/json',
+    }))
+    expect(set.status).toBe(200)
+    expect(set.headers?.['set-cookie']).not.toContain('Max-Age')
+  })
+
+  it('refuses a setup whose two entries differ', async () => {
+    const host = await harness()
+    const sent = await host.serve('setup', request({
+      body: { username: 'dsh', password: PASSWORD, confirmPassword: 'another-password-1' },
+      contentType: 'application/json',
+    }))
+    expect(sent.status).toBe(400)
+    expect(reply(sent).message).toBe(authEn.passwordMismatch)
+    expect(host.passwords.isSet).toBe(false)
+  })
+
+  it('names the consecutive failures only after the second refusal', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-11-09T00:00:00.000Z'))
+    try {
+      const host = await harness({ password: PASSWORD })
+      const once = await host.serve('login', login('dsh', 'wrong-first-attempt'))
+      expect(once.status).toBe(401)
+      expect(reply(once).attemptsMessage).toBeUndefined()
+      await vi.advanceTimersByTimeAsync(1_000)
+      const twice = await host.serve('login', login('dsh', 'wrong-second-attempt'))
+      expect(twice.status).toBe(401)
+      expect(reply(twice).message).toBe(authEn.wrongCredentials)
+      expect(reply(twice).attemptsMessage).toBe(withCount(authEn.failedAttempts, 2))
+      await vi.advanceTimersByTimeAsync(2_000)
+      expect((await host.serve('login', login('dsh', PASSWORD))).status).toBe(200)
+      await vi.advanceTimersByTimeAsync(1_000)
+      const again = await host.serve('login', login('dsh', 'wrong-third-attempt'))
+      expect(reply(again).attemptsMessage).toBeUndefined()
+      expect(host.logs.some(line => line.level === 'warn' && line.message.includes('attempt 2'))).toBe(true)
+      expect(host.logs.some(line => line.level === 'info' && line.message.includes('signed in: account dsh'))).toBe(true)
+      expect(JSON.stringify(host.logs)).not.toContain('wrong-first-attempt')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+})
+
+describe('the sign-in form controls', () => {
+  it('offers a confirm entry only while setting a password', () => {
+    const setup = renderAuthPage(authEn, 'set-password', 'dsh', false)
+    expect(setup).toContain('>' + authEn.confirmLabel + '<')
+    expect(setup).toContain('id="c" name="confirm"')
+    expect(setup).toContain(authEn.rememberLabel)
+    expect(setup).toContain(authEn.revealPassword)
+    expect(setup).toContain('name="remember" type="checkbox" checked')
+    const signIn = renderAuthPage(authEn, 'sign-in', 'dsh', true)
+    expect(signIn).not.toContain('id="c"')
+    expect(signIn).toContain('remember:document.getElementById(\'r\').checked')
   })
 })

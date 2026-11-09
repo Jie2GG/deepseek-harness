@@ -69,6 +69,9 @@ const AUTH_PATHS: Readonly<Record<AuthRouteKind, string>> = {
   login: '/auth/login',
   setup: '/auth/setup',
   logout: '/auth/logout',
+  state: '/auth/state',
+  change: '/auth/change',
+  revoke: '/auth/revoke',
 }
 
 declare module '@deepseek-ai/cordis' {
@@ -202,8 +205,12 @@ export async function apply(ctx: Context, config?: ConnectionConfig): Promise<vo
       throttle,
       reject: (request: Parameters<typeof connection.trustRejection>[0]) => connection.trustRejection(request),
       secure,
+      audit: (level: 'info' | 'warn', message: string): void => {
+        if (level === 'warn') webCtx.logger.warn(message)
+        else webCtx.logger.info(message)
+      },
     }
-    for (const kind of ['login', 'setup', 'logout'] as const) {
+    for (const kind of Object.keys(AUTH_PATHS) as AuthRouteKind[]) {
       const path = AUTH_PATHS[kind]
       webCtx.effect(() => webCtx.webServer.register({
         kind: 'exact',

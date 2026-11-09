@@ -33,6 +33,12 @@ const STYLE = ':root{color-scheme:light dark;--fg:#16181d;--muted:#5b6270;--bg:#
   + 'button[disabled]{opacity:.6;cursor:default}'
   + 'p.note{margin:0 0 18px;padding:9px 11px;border-radius:8px;background:var(--warn-bg);color:var(--warn);font-size:13px}'
   + 'p.error{margin:0 0 16px;color:#c0392b;font-size:13px}'
+  + '.pw{display:flex;gap:8px;margin:0 0 16px}'
+  + '.pw input{margin:0}'
+  + '.pw button{width:auto;margin:0;padding:0 12px;background:var(--card);border:1px solid var(--line);'
+  + 'color:var(--muted);font-weight:400}'
+  + 'label.check{display:flex;align-items:center;gap:8px;margin:0 0 18px;color:var(--fg);font-size:13px}'
+  + 'label.check input{width:auto;margin:0}'
 
 /**
  * Escape text for an HTML text node or a quoted attribute value.
@@ -83,10 +89,17 @@ export function renderAuthPage(
     "var button=document.getElementById('b');",
     "function endpoint(){return state.mode==='set-password'?'auth/setup':'auth/login';}",
     "function say(text){box.textContent=text;box.hidden=false;}",
+    "var pass=document.getElementById('p');",
+    "document.getElementById('v').addEventListener('click',function(){",
+    "pass.type=pass.type==='text'?'password':'text';pass.focus();});",
     "form.addEventListener('submit',function(event){",
     "event.preventDefault();box.hidden=true;button.disabled=true;",
-    "var body=JSON.stringify({username:document.getElementById('u').value,",
-    "password:document.getElementById('p').value});",
+    "var fields={username:document.getElementById('u').value,",
+    "password:document.getElementById('p').value,",
+    "remember:document.getElementById('r').checked};",
+    "var again=document.getElementById('c');",
+    "if(again){fields.confirmPassword=again.value;}",
+    "var body=JSON.stringify(fields);",
     "fetch(endpoint(),{method:'POST',headers:{'content-type':'application/json'},",
     "body:body,credentials:'same-origin'}).then(function(response){",
     "return response.json().catch(function(){return null;})",
@@ -97,28 +110,38 @@ export function renderAuthPage(
     "var data=outcome.data;",
     "if(data&&data.copy){state=data.copy;document.getElementById('h').textContent=state.heading;",
     "button.textContent=state.button;form.action=endpoint();}",
-    "say(data&&data.message?data.message:" + JSON.stringify(messages.requestFailed) + ");",
+    "var text=data&&data.message?data.message:" + JSON.stringify(messages.requestFailed) + ";",
+    "if(data&&data.attemptsMessage){text=text+' '+data.attemptsMessage;}",
+    "say(text);",
     "},function(){button.disabled=false;say(" + JSON.stringify(messages.requestFailed) + ");});",
     "});",
   ].join('')
   /* oxlint-enable @stylistic/quotes */
   return '<!doctype html>\n'
-    + `<html lang="${messages.language}">\n<head>\n<meta charset="utf-8">\n`
-    + '<meta name="viewport" content="width=device-width,initial-scale=1">\n'
-    + '<meta name="referrer" content="no-referrer">\n'
+    + `<html lang=\"${messages.language}\">\n<head>\n<meta charset=\"utf-8\">\n`
+    + '<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">\n'
+    + '<meta name=\"referrer\" content=\"no-referrer\">\n'
     + `<title>${heading}</title>\n<style>${STYLE}</style>\n</head>\n`
     + '<body>\n<main>\n'
-    + `<form id="f" method="post" action="${mode === 'set-password' ? 'auth/setup' : 'auth/login'}" autocomplete="on">\n`
-    + `<h1 id="h">${heading}</h1>\n`
-    + (secure ? '' : `<p class="note">${escapeText(messages.insecureNotice)}</p>\n`)
-    + `<label for="u">${escapeText(messages.usernameLabel)}</label>\n`
-    + `<input id="u" name="username" value="${escapeText(accountName)}" spellcheck="false" required>\n`
-    + `<label for="p">${escapeText(messages.passwordLabel)}</label>\n`
-    + `<input id="p" name="password" type="password" minlength="8" maxlength="256" autocomplete="${
+    + `<form id=\"f\" method=\"post\" action=\"${mode === 'set-password' ? 'auth/setup' : 'auth/login'}\" autocomplete=\"on\">\n`
+    + `<h1 id=\"h\">${heading}</h1>\n`
+    + (secure ? '' : `<p class=\"note\">${escapeText(messages.insecureNotice)}</p>\n`)
+    + `<label for=\"u\">${escapeText(messages.usernameLabel)}</label>\n`
+    + `<input id=\"u\" name=\"username\" value=\"${escapeText(accountName)}\" spellcheck=\"false\" required>\n`
+    + `<label for=\"p\">${escapeText(messages.passwordLabel)}</label>\n`
+    + '<div class=\"pw\">\n'
+    + `<input id=\"p\" name=\"password\" type=\"password\" minlength=\"8\" maxlength=\"256\" autocomplete=\"${
       mode === 'set-password' ? 'new-password' : 'current-password'
-    }" required>\n`
-    + '<p class="error" id="m" role="alert" hidden></p>\n'
-    + `<button id="b" type="submit">${escapeText(copy.button)}</button>\n`
+    }\" required>\n`
+    + `<button id=\"v\" type=\"button\" aria-label=\"${escapeText(messages.revealPassword)}\">◉</button>\n`
+    + '</div>\n'
+    + (mode === 'set-password'
+      ? `<label for=\"c\">${escapeText(messages.confirmLabel)}</label>\n`
+        + '<input id=\"c\" name=\"confirm\" type=\"password\" minlength=\"8\" maxlength=\"256\" autocomplete=\"new-password\" required>\n'
+      : '')
+    + `<label class=\"check\" for=\"r\"><input id=\"r\" name=\"remember\" type=\"checkbox\" checked>${escapeText(messages.rememberLabel)}</label>\n`
+    + '<p class=\"error\" id=\"m\" role=\"alert\" hidden></p>\n'
+    + `<button id=\"b\" type=\"submit\">${escapeText(copy.button)}</button>\n`
     + '</form>\n</main>\n'
     + `<script>${script}</script>\n</body>\n</html>\n`
 }

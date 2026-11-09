@@ -4,7 +4,7 @@ import { createHmac } from 'node:crypto'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { CredentialProvider } from '@deepseek-ai/dsh-credentials'
 import type { PeerId } from '@deepseek-ai/dsh-typert-protocol'
-import { BrowserAuth } from '../src/browser-auth.ts'
+import { BrowserAuth, LAUNCH_EPOCH } from '../src/browser-auth.ts'
 import { PasswordStore } from '../src/password-record.ts'
 import type { ConnectionIndexRequest, ConnectionIndexResponse } from '../src/rpc.ts'
 import { BROWSER_SESSION_KEY, RecordCredentials } from './browser-credentials.ts'
@@ -186,7 +186,7 @@ describe('BrowserAuth', () => {
         'referrer-policy': 'no-referrer',
       },
     })
-    expect(login.state.headers?.['set-cookie']).toMatch(/; Max-Age=2592000; Path=\/; Expires=.*; HttpOnly; SameSite=Strict$/u)
+    expect(login.state.headers?.['set-cookie']).toMatch(/; Max-Age=2592000; Expires=.*; Path=\/; HttpOnly; SameSite=Strict$/u)
     expect(login.state.headers?.['set-cookie']).not.toContain('Secure')
     expect(first.isAuthenticated(request('/', '127.0.0.1:3080', { cookie: login.cookie }))).toBe(true)
     expect(first.isAuthenticated({
@@ -415,5 +415,50 @@ describe('BrowserAuth', () => {
 
     await expect(createAuth(new RecordCredentials(), Number.MAX_SAFE_INTEGER))
       .rejects.toThrow(/safe timestamp range/u)
+  })
+})
+const ACCOUNT_PASSWORD = 'correct-horse-battery'
+
+/** The name and value pair of one Set-Cookie string, without its attributes. */
+function cookiePair(setCookie: string): string {
+  return setCookie.split(';', 1)[0]!
+}
+
+describe('password session generations', () => {
+  it('drops password cookies on a rotation and keeps launch cookies', async () => {
+    const store = new RecordCredentials()
+    const provider = credentials(store)
+    const passwords = new PasswordStore(provider, 'dsh')
+    await passwords.setup('dsh', ACCOUNT_PASSWORD)
+    const auth = await BrowserAuth.create({}, provider, 30, passwords)
+    const signed = cookiePair(auth.issueBrowserCookie('127.0.0.1:3080', passwords.epoch, false))
+    const launched = cookiePair(auth.issueBrowserCookie('127.0.0.1:3080', LAUNCH_EPOCH, false))
+    expect(auth.browserSessionKind(request('/', '127.0.0.1:3080', { cookie: signed }))).toBe('password')
+    expect(auth.browserSessionKind(request('/', '127.0.0.1:3080', { cookie: launched }))).toBe('launch')
+    const before = passwords.epoch
+    expect(await passwords.rotateSession()).toBe(true)
+    expect(passwords.epoch).not.toBe(before)
+    expect(auth.isAuthenticated(request('/', '127.0.0.1:3080', { cookie: signed }))).toBe(false)
+    // A desktop host or machine client that traded the launch token keeps its session.
+    expect(auth.isAuthenticated(request('/', '127.0.0.1:3080', { cookie: launched }))).toBe(true)
+    const renewed = cookiePair(auth.issueBrowserCookie('127.0.0.1:3080', passwords.epoch, false))
+    expect(auth.isAuthenticated(request('/', '127.0.0.1:3080', { cookie: renewed }))).toBe(true)
+  })
+
+  it('dates a remembered sign-in and leaves the other to the browser', async () => {
+    const store = new RecordCredentials()
+    const passwords = new PasswordStore(credentials(store), 'dsh')
+    await passwords.setup('dsh', ACCOUNT_PASSWORD)
+    const auth = await BrowserAuth.create({}, credentials(store), 30, passwords)
+    const dated = auth.issueBrowserCookie('127.0.0.1:3080', passwords.epoch, true)
+    expect(dated).toContain('Max-Age=2592000')
+    expect(dated).toContain('; Secure')
+    const brief = auth.issueBrowserCookie('127.0.0.1:3080', passwords.epoch, false, false)
+    expect(brief).not.toContain('Max-Age')
+    expect(brief).not.toContain('Expires')
+    expect(brief).toContain('Path=/; HttpOnly; SameSite=Strict')
+    expect(auth.isAuthenticated(request('/', '127.0.0.1:3080', {
+      cookie: cookiePair(brief),
+    }))).toBe(true)
   })
 })
