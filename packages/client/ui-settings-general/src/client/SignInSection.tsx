@@ -300,13 +300,13 @@ export function SignInSection({ signOut, t }: SignInSectionProps): ReactNode {
             </span>
           </button>
           <p className={css.description}>{t('signin.description')}</p>
+          <Row title={t('signOut')} hint={t('signin.signOutHint')}>
+            <Button variant="outline" size="sm" onClick={() => { void signOut() }}>{t('signOut')}</Button>
+          </Row>
           <Row title={t('signin.revoke')} hint={t('signin.revokeHint')}>
             <Button variant="outline" size="sm" disabled={busy} onClick={() => { void revoke() }}>
               {armedRevoke ? t('signin.revokeConfirm') : t('signin.revoke')}
             </Button>
-          </Row>
-          <Row title={t('signOut')} hint={t('signin.signOutHint')}>
-            <Button variant="outline" size="sm" onClick={() => { void signOut() }}>{t('signOut')}</Button>
           </Row>
         </>
       )}
