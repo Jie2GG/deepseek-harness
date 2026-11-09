@@ -5,6 +5,9 @@ import type { PeerId } from '@deepseek-ai/dsh-typert-protocol'
 import { CONNECT_PATH, type ConnectionInteractions } from './connect-protocol.ts'
 import { credentialKey } from '@deepseek-ai/dsh-credentials'
 import type { CredentialProvider, CredentialRecord } from '@deepseek-ai/dsh-credentials'
+import { authMessagesFor } from './auth-locale.ts'
+import { renderAuthPage, type AuthPageMode } from './auth-page.ts'
+import type { PasswordStore } from './password-record.ts'
 import type {
   ConnectionIndexRequest,
   ConnectionIndexResponse,
@@ -16,10 +19,17 @@ const DAY_MILLISECONDS = 24 * 60 * 60 * 1000
 const SECRET_BYTES = 32
 const TOKEN_QUERY = 'token'
 const COOKIE_PREFIX = 'dsh-auth-'
-const COOKIE_PAYLOAD_VERSION = 1
+const COOKIE_PAYLOAD_VERSION = 3
+const API_COOKIE_PAYLOAD_VERSION = 2
 const STORED_SECRET_VERSION = 1
 const BASE64URL_PATTERN = /^[A-Za-z0-9_-]*$/
 const PROCESS_LAUNCH_TOKENS = new WeakMap<object, string>()
+
+/**
+ * Generation an index token exchange pins into its cookie, kept independent of
+ * the password record so a machine keeps its session across a password change.
+ */
+export const LAUNCH_EPOCH = 'launch'
 
 interface StoredSecretPayload {
   readonly version: typeof STORED_SECRET_VERSION
@@ -31,16 +41,21 @@ interface BrowserCookiePayload {
   readonly authority: string
   readonly issuedAt: number
   readonly expiresAt: number
+  /** Password generation this session belongs to. */
+  readonly epoch: string
 }
 
-interface ApiCookiePayload extends Omit<BrowserCookiePayload, 'version'> {
-  readonly version: 2
+interface ApiCookiePayload {
+  readonly version: typeof API_COOKIE_PAYLOAD_VERSION
+  readonly authority: string
+  readonly issuedAt: number
+  readonly expiresAt: number
   readonly id: PeerId
 }
 
 type CookiePayload = BrowserCookiePayload | ApiCookiePayload
 
-function isRecord(value: unknown): value is Record<string, unknown> {
+function isRecord(value: unknown): value is Record<PropertyKey, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
@@ -75,8 +90,17 @@ function header(
   return typeof value === 'string' ? value : undefined
 }
 
-/** Protocol-scoped cookie audience; HTTP retains its existing authority-only spelling. */
-function requestAudience(headers: ConnectionTrustRequest['headers'], secure: boolean): string | undefined {
+/**
+ * Protocol-scoped cookie audience a request was addressed to.
+ * HTTP keeps the existing authority-only spelling.
+ * @param headers - request headers from either transport representation.
+ * @param secure - whether the receiving listener serves TLS.
+ * @returns the audience text, or undefined when the request names no Host.
+ */
+export function requestAudience(
+  headers: ConnectionTrustRequest['headers'],
+  secure: boolean,
+): string | undefined {
   const host = header(headers, 'host')
   if (host === undefined) return undefined
   try {
@@ -145,20 +169,23 @@ function signature(secret: Buffer, body: string): Buffer {
 
 function encodeCookie(payload: CookiePayload, secret: Buffer): string {
   const body = encodeBase64Url(Buffer.from(JSON.stringify(payload), 'utf8'))
-  return `v${payload.version}.${body}.${encodeBase64Url(signature(secret, body))}`
+  return `v${String(payload.version)}.${body}.${encodeBase64Url(signature(secret, body))}`
 }
 
 function decodeCookie(value: string, secret: Buffer): CookiePayload | undefined {
   const parts = value.split('.')
   const [version, body, encodedSignature] = parts
-  if (parts.length !== 3 || (version !== 'v1' && version !== 'v2') || body === undefined || encodedSignature === undefined) {
+  const versions: readonly string[] = [`v${String(COOKIE_PAYLOAD_VERSION)}`, `v${String(API_COOKIE_PAYLOAD_VERSION)}`]
+  if (parts.length !== 3 || !versions.includes(version ?? '') || body === undefined || encodedSignature === undefined) {
     return undefined
   }
   const actualSignature = decodeBase64Url(encodedSignature)
   if (actualSignature === undefined) return undefined
   const expectedSignature = signature(secret, body)
   if (actualSignature.byteLength !== expectedSignature.byteLength
-    || !timingSafeEqual(actualSignature, expectedSignature)) return undefined
+    || !timingSafeEqual(actualSignature, expectedSignature)) {
+    return undefined
+  }
   let decoded: unknown
   try {
     const bodyBytes = decodeBase64Url(body)
@@ -168,15 +195,20 @@ function decodeCookie(value: string, secret: Buffer): CookiePayload | undefined 
     return undefined
   }
   if (!isRecord(decoded)
-    || (decoded.version !== COOKIE_PAYLOAD_VERSION && decoded.version !== 2)
-    || version !== `v${decoded.version}`
+    || (decoded.version !== COOKIE_PAYLOAD_VERSION && decoded.version !== API_COOKIE_PAYLOAD_VERSION)
+    || version !== `v${String(decoded.version)}`
     || typeof decoded.authority !== 'string'
     || typeof decoded.issuedAt !== 'number' || !Number.isSafeInteger(decoded.issuedAt)
-    || typeof decoded.expiresAt !== 'number' || !Number.isSafeInteger(decoded.expiresAt)) return undefined
+    || typeof decoded.expiresAt !== 'number' || !Number.isSafeInteger(decoded.expiresAt)) {
+    return undefined
+  }
   const payload = { authority: decoded.authority, issuedAt: decoded.issuedAt, expiresAt: decoded.expiresAt }
-  if (decoded.version === COOKIE_PAYLOAD_VERSION) return { version: COOKIE_PAYLOAD_VERSION, ...payload }
-  if (typeof decoded.id !== 'string' || decoded.id.length === 0) return undefined
-  return { version: 2, ...payload, id: decoded.id as PeerId }
+  if (decoded.version === API_COOKIE_PAYLOAD_VERSION) {
+    if (typeof decoded.id !== 'string' || decoded.id.length === 0) return undefined
+    return { version: API_COOKIE_PAYLOAD_VERSION, ...payload, id: decoded.id as PeerId }
+  }
+  if (typeof decoded.epoch !== 'string' || decoded.epoch.length === 0) return undefined
+  return { version: COOKIE_PAYLOAD_VERSION, ...payload, epoch: decoded.epoch }
 }
 
 async function initializeSecret(credentials: CredentialProvider): Promise<Buffer> {
@@ -199,9 +231,9 @@ async function initializeSecret(credentials: CredentialProvider): Promise<Buffer
 }
 
 /**
- * Process launch-token exchange and persistent signed-cookie verification.
- * Connection loads the credential provider's signing secret during activation
- * and retains it for synchronous request authentication.
+ * Process launch-token exchange, password sign-in sessions, and persistent
+ * signed-cookie verification. Connection loads the credential provider's signing
+ * secret during activation and retains it for synchronous request authentication.
  */
 export class BrowserAuth {
   private readonly launchToken: string
@@ -211,6 +243,7 @@ export class BrowserAuth {
     processOwner: object,
     private readonly secret: Buffer,
     maxAgeDays: number,
+    private readonly passwords: PasswordStore,
   ) {
     this.launchToken = processLaunchToken(processOwner)
     this.maxAgeMilliseconds = maxAgeDays * DAY_MILLISECONDS
@@ -226,14 +259,16 @@ export class BrowserAuth {
    * @param processOwner - root application context retaining one token across Connection reloads.
    * @param credentials - persistent credential provider for the Web profile.
    * @param maxAgeDays - positive absolute browser-cookie lifetime in days.
+   * @param passwords - loaded login secret store that signs browser sessions out on change.
    * @returns initialized authentication owner with the process owner's launch token.
    */
   static async create(
     processOwner: object,
     credentials: CredentialProvider,
     maxAgeDays: number,
+    passwords: PasswordStore,
   ): Promise<BrowserAuth> {
-    return new BrowserAuth(processOwner, await initializeSecret(credentials), maxAgeDays)
+    return new BrowserAuth(processOwner, await initializeSecret(credentials), maxAgeDays, passwords)
   }
 
   /**
@@ -248,17 +283,45 @@ export class BrowserAuth {
   }
 
   /**
-   * Authenticate an index request. A valid root query token mints the cookie
-   * and redirects to the directory-relative clean `./`; a valid cookie lets
-   * the caller serve the index; every other request receives the same minimal
-   * 401 response.
+   * Serialize a signed browser-session cookie for one password generation.
+   * @param authority - cookie audience the request was addressed to.
+   * @param epoch - password generation, or {@link LAUNCH_EPOCH} for a token exchange.
+   * @param secure - whether the receiving listener serves TLS.
+   * @returns the full `Set-Cookie` value.
+   */
+  issueBrowserCookie(authority: string, epoch: string, secure: boolean): string {
+    const issuedAt = Date.now()
+    const expiresAt = issuedAt + this.maxAgeMilliseconds
+    const value = encodeCookie({ version: COOKIE_PAYLOAD_VERSION, authority, issuedAt, expiresAt, epoch }, this.secret)
+    return sessionCookie(cookieName(authority), value, expiresAt, Math.floor(this.maxAgeMilliseconds / 1000), secure)
+  }
+
+  /**
+   * Serialize the cookie that signs a browser out without touching any other session.
+   * @param authority - cookie audience the request was addressed to.
+   * @param secure - whether the receiving listener serves TLS.
+   * @returns the full `Set-Cookie` value with an immediate expiry.
+   */
+  expiredBrowserCookie(authority: string, secure: boolean): string {
+    const now = Date.now()
+    const value = encodeCookie(
+      { version: COOKIE_PAYLOAD_VERSION, authority, issuedAt: now, expiresAt: now, epoch: LAUNCH_EPOCH },
+      this.secret,
+    )
+    return sessionCookie(cookieName(authority), value, now, 0, secure)
+  }
+
+  /**
+   * Authenticate an index request. A valid root query token mints the cookie and
+   * redirects to the directory-relative clean `./`; a valid cookie lets the caller
+   * serve the application; every other request receives the sign-in or setup page.
    * @param req - incoming root or configured-index request.
    * @param res - response owned when this method returns false.
    * @param secure - whether the listener receiving this request serves TLS; the
-   * minted cookie carries `Secure` when it does. Only that listener's own
-   * protocol decides, never a `publicUrl` announcement or a forwarded header:
-   * those describe a hop this process does not terminate.
-   * @returns true only when the caller may serve index.html.
+   * minted cookie carries `Secure` when it does. Only that listener's own protocol
+   * decides, never a `publicUrl` announcement or a forwarded header: those describe
+   * a hop this process does not terminate.
+   * @returns true only when the caller may serve the application index.
    */
   authorizeIndex(req: ConnectionIndexRequest, res: ConnectionIndexResponse, secure = false): boolean {
     /* v8 ignore next -- node:http always supplies url on server requests. */
@@ -268,21 +331,11 @@ export class BrowserAuth {
       const authority = requestAudience(req.headers, secure)
       if (req.method === 'GET' && url.pathname === '/' && tokens.length === 1
         && authority !== undefined && tokenMatches(tokens.join(''), this.launchToken)) {
-        const issuedAt = Date.now()
-        const expiresAt = issuedAt + this.maxAgeMilliseconds
-        const value = encodeCookie({
-          version: COOKIE_PAYLOAD_VERSION,
-          authority,
-          issuedAt,
-          expiresAt,
-        }, this.secret)
         res.writeHead(303, {
           'cache-control': 'no-store',
           'location': './',
           'referrer-policy': 'no-referrer',
-          'set-cookie': sessionCookie(
-            cookieName(authority), value, expiresAt, Math.floor(this.maxAgeMilliseconds / 1000), secure,
-          ),
+          'set-cookie': this.issueBrowserCookie(authority, LAUNCH_EPOCH, secure),
         })
         res.end()
         return false
@@ -300,8 +353,26 @@ export class BrowserAuth {
       return false
     }
     if (this.isAuthenticated(req, secure)) return true
-    this.writeUnauthorized(req, res)
+    this.writeSignInPage(req, res, secure)
     return false
+  }
+
+  /**
+   * Answer an unauthenticated index request with the sign-in page, or the setup
+   * page while this Harness home has no password record.
+   * @param req - index request the page is rendered for.
+   * @param res - response owned by the caller after this method returns false.
+   * @param secure - whether the answering listener serves TLS.
+   */
+  private writeSignInPage(req: ConnectionIndexRequest, res: ConnectionIndexResponse, secure: boolean): void {
+    const messages = authMessagesFor(header(req.headers, 'accept-language'))
+    const mode: AuthPageMode = this.passwords.isSet ? 'sign-in' : 'set-password'
+    res.writeHead(200, {
+      'cache-control': 'no-store',
+      'content-type': 'text/html; charset=utf-8',
+      'referrer-policy': 'no-referrer',
+    })
+    res.end(renderAuthPage(messages, mode, this.passwords.accountName, secure))
   }
 
   /**
@@ -333,39 +404,44 @@ export class BrowserAuth {
       return
     }
     const issuedAt = Date.now()
-    const expiresAt = issuedAt + this.maxAgeMilliseconds
     const id = publish(interactions)
-    const value = encodeCookie({ version: 2, authority, id, issuedAt, expiresAt }, this.secret)
     res.writeHead(302, {
       'cache-control': 'no-store',
       'location': './api/remote.mux',
       'referrer-policy': 'no-referrer',
-      'set-cookie': sessionCookie(
-        cookieName(authority), value, expiresAt, Math.floor(this.maxAgeMilliseconds / 1000), secure,
-      ),
+      'set-cookie': this.issueApiCookie(authority, issuedAt, id, secure),
     })
     res.end()
+  }
+
+  private issueApiCookie(authority: string, issuedAt: number, id: PeerId, secure: boolean): string {
+    const expiresAt = issuedAt + this.maxAgeMilliseconds
+    const value = encodeCookie({ version: API_COOKIE_PAYLOAD_VERSION, authority, issuedAt, expiresAt, id }, this.secret)
+    return sessionCookie(cookieName(authority), value, expiresAt, Math.floor(this.maxAgeMilliseconds / 1000), secure)
   }
 
   /**
    * Verify the authority-bound browser cookie on a Host request.
    * @param request - request headers carrying Host and Cookie.
    * @param secure - whether the receiving listener uses TLS, including its default port.
-   * @returns true only for an unexpired cookie signed by this activation's loaded secret.
+   * @returns true only for an unexpired cookie signed by this activation's loaded
+   * secret whose generation is the current launch exchange or the live password record.
    */
   isAuthenticated(request: ConnectionTrustRequest, secure = false): boolean {
-    return this.authenticate(request, secure)?.version === COOKIE_PAYLOAD_VERSION
+    const payload = this.authenticate(request, secure)
+    if (payload === undefined || payload.version !== COOKIE_PAYLOAD_VERSION) return false
+    return payload.epoch === LAUNCH_EPOCH || payload.epoch === this.passwords.epoch
   }
 
   /**
    * Verify an API credential without creating or reviving its operator.
    * @param request - request headers carrying Host and Cookie.
-   * @param secure - whether the receiving listener uses TLS.
+   * @param secure - whether the receiving listener serves TLS.
    * @returns the signed operator id, or undefined for invalid, expired, or browser cookies.
    */
   authenticateApi(request: ConnectionTrustRequest, secure = false): PeerId | undefined {
     const payload = this.authenticate(request, secure)
-    return payload?.version === 2 ? payload.id : undefined
+    return payload?.version === API_COOKIE_PAYLOAD_VERSION ? payload.id : undefined
   }
 
   private authenticate(request: ConnectionTrustRequest, secure: boolean): CookiePayload | undefined {
@@ -378,7 +454,9 @@ export class BrowserAuth {
     if (payload === undefined || payload.authority !== authority) return undefined
     const now = Date.now()
     if (payload.issuedAt > now || payload.expiresAt <= now || payload.expiresAt <= payload.issuedAt
-      || payload.expiresAt - payload.issuedAt > this.maxAgeMilliseconds) return undefined
+      || payload.expiresAt - payload.issuedAt > this.maxAgeMilliseconds) {
+      return undefined
+    }
     return payload
   }
 
@@ -389,6 +467,6 @@ export class BrowserAuth {
     })
     res.end(req.method === 'HEAD'
       ? undefined
-      : 'dsh web authentication required; reopen the URL printed by dsh web.\n')
+      : 'dsh web authentication required; open the sign-in page.\n')
   }
 }

@@ -130,6 +130,21 @@ export interface ConnectionLocation {
   readonly hostname: string
 }
 
+/**
+ * Ask the served Host to expire this browser's session cookie, then reload.
+ * The reload runs even when the request failed, because a browser that cannot
+ * reach its Host has no session left to end.
+ * @returns after the reload was requested.
+ */
+async function signOutBrowserSession(): Promise<void> {
+  try {
+    await globalThis.fetch('auth/logout', { method: 'POST', credentials: 'same-origin' })
+  } catch (error: unknown) {
+    console.warn(`[connection] sign-out request failed: ${String(error)}`)
+  }
+  globalThis.location.reload()
+}
+
 /** Instance-local inputs for installing a Connection service. */
 export interface ConnectionInstallOptions {
   /** Forwarded-event participation; omission selects answer for a page and none otherwise. */
@@ -169,6 +184,11 @@ export interface ConnectionHandle {
   openWebSocket(path: string): ConnectionWebSocket
   /** Reset retry progression and replace the current attempt immediately. */
   reconnect(): void
+  /**
+   * End this browser's Host session and reload the page. Present only for a
+   * served page, whose Host owns the `/auth` endpoints.
+   */
+  signOut?(this: void): Promise<void>
   /**
    * Register the sole source defining Host generations. The source reports
    * ready only after its incremental listeners are attached.
@@ -290,6 +310,9 @@ export function installConnection(ctx: Context, options: ConnectionInstallOption
     reconnect() {
       owner?.controller.reconnect()
     },
+    ...(pageLocation === undefined || transport !== undefined
+      ? {}
+      : { signOut: () => signOutBrowserSession() }),
     registerGenerationSource(source) {
       if (generationSource !== undefined) {
         throw new Error('connection: a generation source is already registered')

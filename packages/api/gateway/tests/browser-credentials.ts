@@ -6,6 +6,9 @@ const browserCookies = new WeakMap<Context, string>()
 export function provideBrowserCredentials(ctx: Context): void {
   const records = new Map<unknown, unknown>()
   ctx.provide('credentials', {
+    async readRecord(key: unknown): Promise<unknown> {
+      return records.get(key)
+    },
     async modifyRecord(
       key: unknown,
       mutate: (current: unknown) => Promise<unknown>,

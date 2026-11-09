@@ -22,15 +22,17 @@ export default async function open(url) {
   if (process.env.BROWSER_OPEN_TEST_FAILURE !== undefined) {
     throw new Error(process.env.BROWSER_OPEN_TEST_FAILURE)
   }
-  const exchange = await fetch(url, { redirect: 'manual' })
-  const setCookie = exchange.headers.get('set-cookie')
-  const location = exchange.headers.get('location')
-  if (exchange.status !== 303 || setCookie === null || location === null) {
-    throw new Error(`browser authentication exchange returned HTTP ${exchange.status}`)
+  const entry = await fetch(url, { redirect: 'manual' })
+  let response = entry
+  if (entry.status === 303) {
+    // A launch-token handoff trades the token for a session, then reads the page.
+    const setCookie = entry.headers.get('set-cookie')
+    const location = entry.headers.get('location')
+    if (setCookie === null || location === null) {
+      throw new Error(`browser token exchange returned HTTP 303 without a session cookie`)
+    }
+    response = await fetch(new URL(location, url), { headers: { cookie: setCookie.split(';', 1)[0] } })
   }
-  const response = await fetch(new URL(location, url), {
-    headers: { cookie: setCookie.split(';', 1)[0] },
-  })
   const html = await response.text()
   console.log(`dsh browser-open: ${JSON.stringify({
     url,

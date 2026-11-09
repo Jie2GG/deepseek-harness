@@ -9,6 +9,7 @@ import { GeneralSection } from '../src/client/GeneralSection.tsx'
 import { CloseLabel, HeaderContent, TriggerContent } from '../src/client/chrome.tsx'
 import type { TriggerContentProps } from '../src/client/chrome.tsx'
 import { SettingsDocumentAction } from '../src/client/SettingsDocumentAction.tsx'
+import { SignOutAction } from '../src/client/SignOutAction.tsx'
 import { DesktopChannelRow, DesktopChannelToast } from '../src/client/DesktopChannelRow.tsx'
 import { DesktopChannelSource } from '../src/client/desktop-channel-source.ts'
 import type { DesktopChannelChangeResult, DesktopChannelState } from '../src/types.ts'
@@ -432,4 +433,19 @@ it('labels uncertain settings saves without claiming they were not written', () 
 it('does not describe a saved selection that failed to apply as unsaved', () => {
   expect(zh['desktop.channel.result.apply']).toBe('设置保存异常')
   expect(en['desktop.channel.result.apply']).toBe('Settings save error')
+})
+
+describe('SignOutAction', () => {
+  it('ends the browser session when the carrier offers the command', () => {
+    const signOut = vi.fn(() => Promise.resolve())
+    render(<SignOutAction {...kit} t={t} signOut={signOut} />)
+    fireEvent.click(screen.getByRole('button', { name: en.signOut }))
+    expect(signOut).toHaveBeenCalledTimes(1)
+  })
+
+  it('hides itself for a carrier that owns its transport', () => {
+    const view = render(<SignOutAction {...kit} t={t} signOut={undefined} />)
+    expect(view.container.innerHTML).toBe('')
+    expect(screen.queryByRole('button')).toBeNull()
+  })
 })

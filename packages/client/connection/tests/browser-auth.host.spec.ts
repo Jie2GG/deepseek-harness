@@ -5,17 +5,18 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { CredentialProvider } from '@deepseek-ai/dsh-credentials'
 import type { PeerId } from '@deepseek-ai/dsh-typert-protocol'
 import { BrowserAuth } from '../src/browser-auth.ts'
+import { PasswordStore } from '../src/password-record.ts'
 import type { ConnectionIndexRequest, ConnectionIndexResponse } from '../src/rpc.ts'
-import { RecordCredentials } from './browser-credentials.ts'
+import { BROWSER_SESSION_KEY, RecordCredentials } from './browser-credentials.ts'
 
-function signedCookie(store: RecordCredentials, name: string, payload: unknown): string {
+function signedCookie(store: RecordCredentials, name: string, payload: unknown, version = 3): string {
   const body = typeof payload === 'string'
     ? Buffer.from(payload, 'utf8').toString('base64url')
     : Buffer.from(JSON.stringify(payload), 'utf8').toString('base64url')
-  return signedBodyCookie(store, name, body)
+  return signedBodyCookie(store, name, body, version)
 }
 
-function signedBodyCookie(store: RecordCredentials, name: string, body: string): string {
+function signedBodyCookie(store: RecordCredentials, name: string, body: string, version = 3): string {
   const record = store.record
   if (record?.kind !== 'grant' || typeof record.payload !== 'object' || record.payload === null) {
     throw new Error('test credential store has no signing secret')
@@ -23,7 +24,7 @@ function signedBodyCookie(store: RecordCredentials, name: string, body: string):
   const secret: unknown = Reflect.get(record.payload, 'secret')
   if (typeof secret !== 'string') throw new Error('test credential record has no string secret')
   const signature = createHmac('sha256', Buffer.from(secret, 'base64url')).update(body).digest('base64url')
-  return `${name}=v1.${body}.${signature}`
+  return `${name}=v${String(version)}.${body}.${signature}`
 }
 
 interface ResponseState {
@@ -52,12 +53,17 @@ function credentials(store: RecordCredentials): CredentialProvider {
   return store as unknown as CredentialProvider
 }
 
-function createAuth(
+async function createAuth(
   store: RecordCredentials,
   maxAgeDays = 30,
   processOwner: object = {},
+  password?: { username: string; password: string },
 ): Promise<BrowserAuth> {
-  return BrowserAuth.create(processOwner, credentials(store), maxAgeDays)
+  const provider = credentials(store)
+  const passwords = new PasswordStore(provider, 'dsh')
+  if (password === undefined) await passwords.load()
+  else await passwords.setup(password.username, password.password)
+  return BrowserAuth.create(processOwner, provider, maxAgeDays, passwords)
 }
 
 function request(url: string, authority = '127.0.0.1:3080', init?: {
@@ -103,7 +109,7 @@ describe('API credentials', () => {
     expect(res.state).toEqual({
       status: 401,
       headers: { 'cache-control': 'no-store', 'content-type': 'text/plain; charset=utf-8' },
-      body: 'dsh web authentication required; reopen the URL printed by dsh web.\n',
+      body: 'dsh web authentication required; open the sign-in page.\n',
     })
     expect(publish).not.toHaveBeenCalled()
   })
@@ -148,10 +154,16 @@ describe('API credentials', () => {
       { ...payload, expiresAt: 'later' },
       { ...payload, expiresAt: issuedAt - 1 },
     ]) {
-      const invalidCookie = signedCookie(store, name, invalid).replace('=v1.', '=v2.')
+      const invalidCookie = signedCookie(store, name, invalid, 2)
       expect(auth.authenticateApi(request('/', authority, { cookie: invalidCookie }))).toBeUndefined()
       expect(auth.isAuthenticated(request('/', authority, { cookie: invalidCookie }))).toBe(false)
     }
+    // A pre-password v1 browser cookie carries no generation and is refused.
+    const v1Parts = value.split('.')
+    expect(auth.isAuthenticated(request('/', '127.0.0.1:3080', {
+      cookie: `${name}=v1.${v1Parts[1]}.${v1Parts[2]}`,
+    }))).toBe(false)
+
     const shorter = await createAuth(store, 1)
     expect(shorter.authenticateApi(request('/', authority, { cookie }))).toBeUndefined()
     vi.setSystemTime(payload.expiresAt)
@@ -226,7 +238,8 @@ describe('BrowserAuth', () => {
     const restarted = await createAuth(store)
     const denied = response()
     expect(restarted.authorizeIndex(request('/', authority, { cookie: plain.cookie }), denied.value, true)).toBe(false)
-    expect(denied.state.status).toBe(401)
+    // An audience-mismatched cookie is not authentication: the index answers with the page.
+    expect(denied.state.status).toBe(200)
 
     const tls = exchange(restarted, authority, true)
     expect(tls.state.headers?.['set-cookie']).toContain('; Secure')
@@ -260,6 +273,40 @@ describe('BrowserAuth', () => {
     ))).toBe(true)
   })
 
+  it('answers an unauthenticated index request with the sign-in or setup page', async () => {
+    const store = new RecordCredentials()
+    const guest = await createAuth(store)
+    const setUp = response()
+    expect(guest.authorizeIndex(request('/'), setUp.value)).toBe(false)
+    expect(setUp.state.status).toBe(200)
+    expect(setUp.state.headers).toEqual({
+      'cache-control': 'no-store',
+      'content-type': 'text/html; charset=utf-8',
+      'referrer-policy': 'no-referrer',
+    })
+    expect(String(setUp.state.body)).toContain('<!doctype html>')
+    expect(String(setUp.state.body)).toContain('action="auth/setup"')
+
+    const member = await createAuth(store, 30, {}, { username: 'dsh', password: 'long-enough-password' })
+    const signIn = response()
+    expect(member.authorizeIndex(request('/'), signIn.value)).toBe(false)
+    expect(String(signIn.state.body)).toContain('action="auth/login"')
+    expect(String(signIn.state.body)).not.toContain('action="auth/setup"')
+
+    const german = response()
+    expect(member.authorizeIndex({
+      method: 'GET',
+      url: '/',
+      headers: { host: '127.0.0.1:3080', 'accept-language': 'de-DE,de;q=0.9' },
+    }, german.value)).toBe(false)
+    expect(String(german.state.body)).toContain('lang="de"')
+
+    const tlsPage = response()
+    expect(member.authorizeIndex(request('/'), tlsPage.value, true)).toBe(false)
+    expect(String(tlsPage.state.body)).not.toContain('is not encrypted')
+    expect(String(setUp.state.body)).toContain('not encrypted')
+  })
+
   it('accepts the cookie for index serving and gives every unauthenticated request one response', async () => {
     const auth = await createAuth(new RecordCredentials())
     const { cookie } = exchange(auth)
@@ -268,7 +315,6 @@ describe('BrowserAuth', () => {
     expect(allowed.state).toEqual({})
 
     for (const candidate of [
-      request('/'),
       request('/?token=wrong'),
       request('/?token=wrong&token=again'),
       request('/index.html?token=wrong'),
@@ -283,7 +329,7 @@ describe('BrowserAuth', () => {
       })
       expect(denied.state.body).toBe(candidate.method === 'HEAD'
         ? undefined
-        : 'dsh web authentication required; reopen the URL printed by dsh web.\n')
+        : 'dsh web authentication required; open the sign-in page.\n')
     }
   })
 
@@ -308,10 +354,13 @@ describe('BrowserAuth', () => {
     const invalidPayloads: unknown[] = [
       'not json',
       null,
-      { version: 2, authority: '127.0.0.1:3080', issuedAt: Date.now(), expiresAt: Date.now() + 1000 },
-      { version: 1, authority: 42, issuedAt: Date.now(), expiresAt: Date.now() + 1000 },
-      { version: 1, authority: '127.0.0.1:3080', issuedAt: 'now', expiresAt: Date.now() + 1000 },
-      { version: 1, authority: '127.0.0.1:3080', issuedAt: Date.now(), expiresAt: 'later' },
+      // A browser cookie without the password generation is unreadable.
+      { version: 3, authority: '127.0.0.1:3080', issuedAt: Date.now(), expiresAt: Date.now() + 1000 },
+      { version: 3, authority: 42, issuedAt: Date.now(), expiresAt: Date.now() + 1000, epoch: 'launch' },
+      { version: 3, authority: '127.0.0.1:3080', issuedAt: 'now', expiresAt: Date.now() + 1000, epoch: 'launch' },
+      { version: 3, authority: '127.0.0.1:3080', issuedAt: Date.now(), expiresAt: 'later', epoch: 'launch' },
+      { version: 3, authority: '127.0.0.1:3080', issuedAt: Date.now(), expiresAt: Date.now() + 1000, epoch: '' },
+      { version: 3, authority: '127.0.0.1:3080', issuedAt: Date.now(), expiresAt: Date.now() + 1000, epoch: 42 },
     ]
     for (const payload of invalidPayloads) {
       expect(auth.isAuthenticated(request('/', '127.0.0.1:3080', {
@@ -333,7 +382,7 @@ describe('BrowserAuth', () => {
     const first = exchange(auth)
     expect(store).toMatchObject({ reads: 0, modifies: 1 })
 
-    await store.deleteRecord()
+    await store.deleteRecord(BROWSER_SESSION_KEY)
     expect(auth.isAuthenticated(request('/', '127.0.0.1:3080', { cookie: first.cookie }))).toBe(true)
     const sameActivation = exchange(auth)
     expect(auth.isAuthenticated(request('/', '127.0.0.1:3080', { cookie: sameActivation.cookie }))).toBe(true)

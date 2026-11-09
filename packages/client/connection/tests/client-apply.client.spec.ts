@@ -6,6 +6,7 @@ import { Context } from '@deepseek-ai/cordis'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   apply,
+  installConnection,
   type ClientConnectionRpc,
   type ClientTransportHooks,
   type ConnectionGenerationSource,
@@ -623,6 +624,60 @@ describe('connection client apply', () => {
     ] as const) {
       await expect(handle.rpc.call(channel, endpoint, {})).rejects.toThrow('invalid RPC target')
     }
+  })
+
+  it('opens the WebSocket carrier for the mounted page through the installed transport', async () => {
+    const opened: string[] = []
+    const socket = { readyState: 1, send: () => {}, close: () => {}, addEventListener: () => {}, removeEventListener: () => {} }
+    vi.stubGlobal('location', { hostname: '127.0.0.1', origin: 'http://127.0.0.1:3080' })
+    ;(globalThis as Win).__DSH_TRANSPORT__ = {
+      streamBaseUrl: 'http://127.0.0.1:3080/',
+      createWebSocket: (url) => { opened.push(url); return socket },
+    }
+    const handle = await mount()
+    handle.openWebSocket('/api/remote.mux').send('{}')
+    expect(opened).toEqual(['ws://127.0.0.1:3080/api/remote.mux'])
+    expect(handle.signOut).toBeUndefined()
+    // A bare install has no recovery table and no page location to answer for.
+    const bare = new Context()
+    installConnection(bare)
+    const bareHandle = bare.get('connection') as ConnectionHandle
+    expect(bareHandle.interactions).toBe('none')
+    await bare.fiber.dispose()
+    ;(globalThis as Win).__DSH_TRANSPORT__ = {}
+    expect((await mount()).interactions).toBe('answer')
+  })
+
+  it('offers sign-out to a served page and reloads once the Host expires the cookie', async () => {
+    const posted: [string, RequestInit][] = []
+    vi.stubGlobal('fetch', (input: string, init: RequestInit) => {
+      posted.push([input, init])
+      return Promise.resolve(new Response(null, { status: 200 }))
+    })
+    let reloaded = 0
+    vi.stubGlobal('location', { hostname: '127.0.0.1', reload: () => { reloaded += 1 } })
+    const handle = await mount()
+    await handle.signOut?.()
+    expect(posted).toEqual([['auth/logout', { method: 'POST', credentials: 'same-origin' }]])
+    expect(reloaded).toBe(1)
+  })
+
+  it('keeps sign-out off a carrier that owns its transport', async () => {
+    vi.stubGlobal('location', { hostname: '127.0.0.1', reload: () => {} })
+    ;(globalThis as Win).__DSH_TRANSPORT__ = { rpc: { call: async () => ({ ok: true, value: null }) } }
+    const handle = await mount()
+    expect(handle.signOut).toBeUndefined()
+  })
+
+  it('reloads even when the sign-out request cannot reach the Host', async () => {
+    const warnings = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    vi.stubGlobal('fetch', () => Promise.reject(new Error('offline')))
+    let reloaded = 0
+    vi.stubGlobal('location', { hostname: '127.0.0.1', reload: () => { reloaded += 1 } })
+    const handle = await mount()
+    await handle.signOut?.()
+    expect(reloaded).toBe(1)
+    expect(warnings.mock.calls[0]?.[0]).toContain('sign-out request failed')
   })
 
 })

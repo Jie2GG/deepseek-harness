@@ -228,11 +228,14 @@ export function apply(ctx: Context, config: Config): void {
         const authenticatedUrl = connectionCtx.connection.authenticatedUrl(webUrl)
         ANNOUNCED_ROOTS.add(connectionCtx.root)
         if (config.printUrl) {
+          // The startup line stays the machine handoff: a supervisor reads the
+          // launch token from it and exchanges it at /connect. A human browser
+          // opens the clean URL and signs in with the configured password.
           console.log(`dsh web: ${authenticatedUrl}`)
         }
         if (handoffBrowser) {
           console.log('dsh web: opening the default browser; pass --no-open to disable')
-          void internals.openBrowser(authenticatedUrl).catch((error: unknown) => {
+          void internals.openBrowser(webUrl).catch((error: unknown) => {
             const reason = error instanceof Error ? error.message : String(error)
             console.error(`web-app: could not open the default browser because ${reason}; use the dsh web URL printed at startup`)
           })

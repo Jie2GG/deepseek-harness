@@ -39,6 +39,8 @@ function normalizeLocalUrl(url: string): string {
 
 describe.skipIf(!builtArtifactsExist)('dsh web browser-open assembled snapshot', () => {
   it('hands the reachable page to the default browser after the shipped tree settles', async () => {
+    // The handoff opens the clean URL, so the delivered document is the sign-in
+    // page while no password exists; the startup line keeps the machine token.
     const root = mkdtempSync(join(tmpdir(), 'dsh-web-browser-open-snapshot-'))
     tempRoots.push(root)
     const result = await execa(process.execPath, [
@@ -84,10 +86,10 @@ describe.skipIf(!builtArtifactsExist)('dsh web browser-open assembled snapshot',
     }).toMatchInlineSnapshot(`
       {
         "apiKeyPresent": false,
-        "bootManifest": true,
+        "bootManifest": false,
         "dshHomePresent": false,
         "exitCode": 0,
-        "openedUrl": "http://127.0.0.1:{{port}}/?token={{token}}",
+        "openedUrl": "http://127.0.0.1:{{port}}",
         "opening": true,
         "readyUrl": "http://127.0.0.1:{{port}}/?token={{token}}",
         "status": 200,

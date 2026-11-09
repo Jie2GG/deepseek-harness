@@ -240,6 +240,11 @@ describe('connection node half', () => {
   it('uses the TLS default port for markerless exact-authority grants', async () => {
     const { connection, dispose } = await mounted({ trustedHosts: ['tls.example:443', 'plain.example:80'] }, 'https:')
     try {
+      // The authentication routes answer for an unauthenticated browser, so they
+      // read only the trust verdict: 401 stays theirs to decide.
+      expect(connection.trustRejection(fakeRequest({ host: 'tls.example' }))).toBeUndefined()
+      expect(connection.trustRejection(fakeRequest({ host: 'plain.example' }))).toBe(403)
+      expect(connection.trustRejection(fakeRequest({ host: 'plain.example', 'sec-fetch-site': 'cross-site' }))).toBe(403)
       expect(connection.requestRejection(fakeRequest({ host: 'tls.example' }))).toBe(401)
       expect(connection.requestRejection(fakeRequest({ host: 'plain.example' }))).toBe(403)
       expect(connection.requestRejection(fakeRequest({ host: 'tls.example:444' }))).toBe(403)
@@ -345,9 +350,9 @@ describe('connection node half', () => {
     expect(upgrades).toHaveLength(0)
   })
 
-  it('registers the API and connect HTTP routes and removes them with the fiber', async () => {
+  it('registers the API, connect, and authentication routes and removes them with the fiber', async () => {
     const { routes, upgrades, dispose } = await mounted()
-    expect(routes).toHaveLength(2)
+    expect(routes.map(route => route.path)).toEqual([API_PATH, '/connect', '/auth/login', '/auth/setup', '/auth/logout'])
     expect(routes[0]).toMatchObject({ kind: 'prefix', path: API_PATH })
     expect(upgrades).toHaveLength(0)
     await dispose()
@@ -443,7 +448,7 @@ describe('connection node half', () => {
     ctx.provide('webServer', fakeHttpServer(routes, []) as WebServer)
     const fiber = ctx.plugin({ inject: [...inject], apply })
     await fiber.await()
-    expect(routes).toHaveLength(2)
+    expect(routes).toHaveLength(5)
     expect(routes[0]).toMatchObject({ kind: 'prefix', path: API_PATH })
 
     const connection = ctx.get('connection') as HostConnectionHandle
@@ -480,7 +485,7 @@ describe('connection node half', () => {
     expect(() => connection.rpc.handle('/rpc', async () => ({ ok: true, value: null })))
       .toThrow(/duplicate route/)
     await remove()
-    expect(routes.map(candidate => candidate.path)).toEqual([API_PATH, '/connect'])
+    expect(routes.map(candidate => candidate.path)).toEqual([API_PATH, '/connect', '/auth/login', '/auth/setup', '/auth/logout'])
     await fiber.dispose()
     expect(routes).toHaveLength(0)
   })
@@ -740,7 +745,8 @@ describe('operator-scoped connect', () => {
       expect(host.connection.authorizeIndex(fakeRequest(
         { host: 'localhost', cookie: api.cookie }, '/',
       ), denied.response)).toBe(false)
-      expect(denied.state.status).toBe(401)
+      // An API cookie is not browser authentication, so the index answers with the page.
+      expect(denied.state.status).toBe(200)
     } finally { await host.dispose() }
   })
 
