@@ -26,6 +26,7 @@ import { join } from 'node:path'
 import { describe, expect, it, onTestFinished, vi } from 'vitest'
 import { HostConnectionService } from '../../../client/connection/src/rpc-host.ts'
 import { BrowserAuth } from '../../../client/connection/src/browser-auth.ts'
+import { PasswordStore } from '../../../client/connection/src/password-record.ts'
 import { provideBrowserCredentials } from '../../../api/gateway/tests/browser-credentials.ts'
 import { createSessionTestController } from '../../../api/session-controller/tests/test-remote.ts'
 import { SessionController, type SessionCancelRequest } from '../../../api/session-controller/src/index.ts'
@@ -86,7 +87,9 @@ async function readerHarness(creator: ShareRpcActor, target: 'fork' | 'source' =
   await mountAgentLoopTestDependencies(ctx)
   const driver = await mountAgentLoopTestHarness(ctx)
   provideBrowserCredentials(ctx)
-  const auth = await BrowserAuth.create(ctx, ctx.credentials, 1)
+  const passwords = new PasswordStore(ctx.credentials, 'dsh')
+  await passwords.load()
+  const auth = await BrowserAuth.create(ctx, ctx.credentials, 1, passwords)
   new HostConnectionService(ctx, [], auth)
   // Provided on the root Context that also constructs the Session controller below, which re-reads
   // access from that Context's own fiber while a Gateway call runs.

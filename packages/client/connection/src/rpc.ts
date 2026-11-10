@@ -233,6 +233,14 @@ export interface HostConnectionHandle {
   requestRejection(request: ConnectionTrustRequest): ConnectionRequestRejection
 
   /**
+   * Apply only Connection's Host/Origin checks, for a route that authenticates
+   * the caller itself.
+   * @param request - request headers from the HTTP or upgrade request.
+   * @returns 403 when the authority or browser markers are refused, otherwise undefined.
+   */
+  trustRejection(request: ConnectionTrustRequest): 403 | undefined
+
+  /**
    * Admit an HTTP request against its signed browser or API credential and live Peer.
    * @param request - request headers from the HTTP or upgrade request.
    * @returns the credential's Peer, or the rejection status.

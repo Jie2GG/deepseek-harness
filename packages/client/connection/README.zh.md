@@ -9,7 +9,7 @@ kind: "package-reference"
 
 ## 概述
 
-本包承载浏览器到 Host 的 Remote 调用、精确 Fetch 响应与 connection generation。Client 插件挂载 `ctx.connection`，其中包含当前页面的 loopback 状态、通用 RPC、当前 generation 及其 Host 信息、可观察的恢复状态、立即重连命令，以及单一 generation source 的注册点。source 报告 ready 后 generation 才可见；source 结束、失败、被撤回或显式 stop 都会清空它，再由 `ConnectionController` 执行重试策略。
+本包承载浏览器到 Host 的 Remote 调用、精确 Fetch 响应与 connection generation。Client 插件挂载 `ctx.connection`，其中包含当前页面的 loopback 状态、通用 RPC、当前 generation 及其 Host 信息、可观察的恢复状态、立即重连命令、服务页面携带的退出登录命令，以及单一 generation source 的注册点。source 报告 ready 后 generation 才可见；source 结束、失败、被撤回或显式 stop 都会清空它，再由 `ConnectionController` 执行重试策略。
 
 ## 目录
 
@@ -38,9 +38,15 @@ kind: "package-reference"
 <a id="browser-authentication-and-request-trust"></a>
 ## 浏览器认证与请求信任
 
-通过 Web 载体访问时，每个 Host RPC 方法和 WebSocket 流都要求经过认证的浏览器或 API Peer，不存在按方法区分的 loopback 层。每个进程生成一个随机启动令牌。`dsh-web-app` 打印并打开带 `?token=...` 的应用 URL，保留调用方的 authority 与挂载；`frontend-static` 把根路径和 index 请求交给 `ctx.connection.authorizeIndex`，后者只在 `GET /` 接受该令牌，写入绑定 authority 的签名 cookie，再重定向到干净的 `./`，移除令牌并保留请求目录。缺失、过期、畸形或 authority 不匹配的 cookie 会在 RPC 分发前得到 401。静态资源保持公开。HTTP 载体只在根路径交换与 `/connect` 接受 query token，不接受 Authorization header token。
+通过 Web 载体访问时，每个 Host RPC 方法和 WebSocket 流都要求经过认证的浏览器或 API Peer，不存在按方法区分的 loopback 层。浏览器用一个账号名加一个口令登录。`dsh web` 打印的网址仍带进程启动令牌，供 supervisor 与机器客户端使用；它自动打开的浏览器地址不带令牌，所以首次访问看到的是表单而不是应用。`frontend-static` 把根路径与 index 请求交给 `ctx.connection.authorizeIndex`：`GET /?token=...` 交换仍会写入绑定 authority 的签名 cookie 并重定向到干净的 `./`；其它未认证的 index 请求返回 `200` 和一个自包含的登录或设置文档（`Cache-Control: no-store`，不引用外部资源），它向下面这些路由提交 JSON。缺失、过期、畸形、authority 不符或 generation 不符的 cookie 因此落到登录页而不是应用，而 `/api` 调用仍返回 401 文本。静态资源保持公开。HTTP 载体只在根路径交换与 `/connect` 接受查询令牌，且不接受 Authorization 头令牌。
 
-cookie 签名密钥是 `ctx.credentials` 中由 `client-connection/browser-session` 拥有的 grant 记录。本地提供方把它持久化到 `$DSH_HOME/.credentials.yaml`；`BrowserAuth` 在 Connection 激活期间加载或创建该记录，并把密钥留在内存中，因此请求认证同步执行。删除或替换该记录会在下一次 Connection 激活时生效。cookie 携带绝对签发与过期区间，`cookieMaxAgeDays` 默认设为 30 天，并在确定性名称与签名 payload 中同时绑定规范化 hostname 和 port。它是 host-only、`Path=/`、`HttpOnly`、`SameSite=Strict`；收到该 index 请求的监听器提供 TLS 时才带上 `Secure`，且只由该监听器自身的协议决定，`publicUrl` 声明与转发头都不参与判断。
+这套认证入口有六条路由，都由本插件注册在 `/connect` 旁边，且每条都先过同一道 Host/Origin 栅栏。尚未登录的浏览器可以调用 `POST /auth/setup`（在尚无口令时存下第一条口令）、`POST /auth/login`（校验账号与口令）和 `POST /auth/logout`（清除自己的 cookie）。已登录的浏览器还可以调用 `POST /auth/state`（报出账号名、是否已设口令，以及本次会话是口令登录还是令牌换入）、`POST /auth/change`（先证明当前口令，再存入新的账号名与口令）和 `POST /auth/revoke`（替换会话代次，从而登出其他所有靠口令登录的浏览器，而本机、桌面宿主与机器客户端不受影响）。每条只接受一个不超过 64 KiB 的 `application/json` 请求体，并返回 JSON：成功是 `200` 加 `Set-Cookie`；账号或口令错误、或调用方尚未登录是 `401`；改口令时当前口令证明不了是 `403`；表单与已存状态不再一致是 `409`；账号名不可用、口令过短、两次输入不一致或字段未知是 `400`；体积与类型不符分别是 `413` 与 `415`；处于登录等待期内是 `429`。拒绝响应带上本地化提示以及表单应切换到的文案，因此同一个页面承担两种形态；连续失败达到两次时，拒绝响应还会报出失败次数。首次设置借助 `ctx.credentials.modifyRecord` 避免竞态：写入时发现没有记录的那一方创建它，之后的调用方都被要求改为登录。口令长度限为 8–256 字符；提交的账号名会去除首尾空格并区分大小写比较。表单提供确认输入框与「记住我」：不勾选时省略 `Max-Age` 与 `Expires`，该 cookie 随浏览器关闭而消失，而签名内容仍按配置的上限到期。页面文案按 `Accept-Language` 在随产品发布的界面语言中选择，无法匹配时回落英文。 表单旁边用点阵描出官方鱼形轮廓：一道水波扫过，少数点会短暂变成代码字符；这套动画是页面内联的 Canvas 实现，浏览器要求减少动态效果时只画一帧，且不加载任何外部资源；登录请求进行中时，提交按钮自身显示进度。
+
+口令是 owner 作用域的 `client-connection/password` grant 记录：`{version, username, digest, sessionEpoch}`，其中 digest 形如 `scrypt$<cost>$<blockSize>$<parallelism>$<salt>$<key>`，参数是协议固定的（cost 16384、block size 8、parallelism 1、salt 32 字节、key 64 字节）；`sessionEpoch` 是 32 字节随机值，凡需要让所有口令登录作废时就被替换。只有该记录的所有者解读 digest，记录沿用提供方的 `0600` 权限、文件锁与原子写。版本 `1` 的记录——同样的字段但没有 `sessionEpoch`——仍然可读，并继续为它已签出的 cookie 提供同一个 generation，所以升级本版本不会把任何人踢下线；第一次改口令或替换会话时它被重写为版本 `2`。配置项 `username`（默认 `dsh`）只提供新设置表单里的账号名；记录一旦存在，表单报出的就是当时存入的名字，直到某次修改把它替换掉。忘记口令的恢复办法仍是删除该记录并重启，页面随之回到设置形态。这里没有账号列表，也没有按账号划分的权限：所有已认证浏览器仍共用 `ctx.connection.browserPeer`。
+
+cookie 签名密钥是 `ctx.credentials` 中由 `client-connection/browser-session` 拥有的 grant 记录。本地提供方把它持久化到 `$DSH_HOME/.credentials.yaml`；`BrowserAuth` 在 Connection 激活期间加载或创建该记录，并把密钥留在内存中，因此除了一次提交口令所需的 scrypt 推导之外，请求认证仍是同步的。删除或替换该记录会在下一次 Connection 激活时生效。cookie 携带绝对签发与过期区间，`cookieMaxAgeDays` 默认设为 30 天，并在确定性名称与签名 payload 中同时绑定规范化 hostname 和 port。浏览器 cookie 是版本 `v3`，带上由当前 `client-connection/password` 记录哈希出的 generation；由进程令牌签发的则带 `launch`：改口令或调用 `/auth/revoke` 会使口令签发的 cookie 立即失效，而机器与桌面会话仍保住自己的；版本 `v1` 的浏览器 cookie 被拒绝，API cookie 仍是版本 `v2`。它是 host-only、`Path=/`、`HttpOnly`、`SameSite=Strict`；收到该 index 请求的监听器提供 TLS 时才带上 `Secure`，且只由该监听器自身的协议决定，`publicUrl` 声明与转发头都不参与判断。
+
+重复登录会被放慢：按客户端地址与账号名统计连续失败，等待时间从一秒起倍增，上限三十秒，一旦成功即清零。这个等待只存在内存里，重启后重新计算；启动令牌与 `/connect` 不受放慢影响。 每一次登录成功或失败、首次设置、改口令、替换会话与登出都会经 `ctx.logger` 写一行，只含账号名与对端地址，任何一行都不带口令。
 
 HTTPS cookie 名称与签名 audience 包含 `https:` scheme，因此即使 hostname 和 port 相同，HTTP cookie 也无法通过 TLS 监听器的认证。默认端口按监听器的 scheme 归一化。既有 HTTP cookie audience 保持不变。
 
@@ -78,9 +84,11 @@ HTTPS cookie 名称与签名 audience 包含 `https:` scheme，因此即使 host
 <a id="known-limitations-and-deferred-work"></a>
 
 - **缓冲型 `/api` 路由会把每个请求体保留在内存里**：`maxRequestBodyBytes`（默认 300 MiB，按默认 200 MiB 图片总量上限经 base64 膨胀加信封余量得出）限制普通图片与 RPC 信封。显式启用的流式路由接收带背压的分块并绕过总量上限；路由实现负责持久化、取消与存储配额。
-- **明文 HTTP 监听器会在传输中暴露 bearer cookie**：此类部署无法给浏览器 cookie 加 `Secure`；若把同一 authority 暴露到网络上，会话 cookie 可能泄露；在 Web 载体（[`dsh-host-webserver`](../../host/webserver/README.zh.md)）上配置 TLS 即可让 cookie 带上 `Secure` 并只经 TLS 发送。
+- **明文 HTTP 监听器会在传输中暴露 bearer cookie 与登录口令**：此类部署无法给浏览器 cookie 加 `Secure`；若把同一 authority 暴露到网络上，会话 cookie 可能泄露；在 Web 载体（[`dsh-host-webserver`](../../host/webserver/README.zh.md)）上配置 TLS 即可让 cookie 带上 `Secure` 并只经 TLS 发送。
 - **未使用的 API Peer 可以保留到 Host 退出**：调用方从未建立 WebSocket 时，其轻量记录不受建联期限或空闲回收约束。Cookie 过期仍拒绝新请求。其生命周期 socket 关闭或 Host 重启后，API 调用方必须通过 `/connect` 重新接入。
-- **没有 logout 操作**：清除浏览器 cookie 会结束单个浏览器会话；删除 owner 凭据记录并重启 `dsh` 会撤销全部会话。
+- **一个口令守住所有浏览器会话**：没有账号列表，也没有按账号划分的权限，所以共用电脑无法区分使用者；所有已认证浏览器仍然共用 `ctx.connection.browserPeer`。
+- **登录节流只在进程内，忘记口令要回到磁盘上恢复**：按地址与账号的等待保存在内存里，重启即清零；设置页里的改口令要求调用方已经知道当前口令，忘记口令的恢复办法仍是删除 `client-connection/password` 记录并重启。
+- **退出只逐个覆盖浏览器**：`POST /auth/logout` 只清除该浏览器的 cookie，`POST /auth/revoke` 一次作废其他所有口令签发的 cookie，改口令同样会替换这个会话代次；令牌签发的 cookie 不在其中，会活到自身过期或进程令牌变化。
 
 
 <a id="dev-note"></a>

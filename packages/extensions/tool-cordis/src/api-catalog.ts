@@ -837,6 +837,12 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         returns: 'rejection status, or undefined when the route may accept the request.',
       },
       {
+        signature: 'trustRejection(request: ConnectionTrustRequest): 403 | undefined',
+        description: 'Apply only Connection\'s Host/Origin checks, for a route that authenticates the caller itself.',
+        parameters: [{ name: 'request', description: 'request headers from the HTTP or upgrade request.' }],
+        returns: '403 when the authority or browser markers are refused, otherwise undefined.',
+      },
+      {
         signature: 'admit(request: ConnectionTrustRequest): PeerAdmission',
         description: 'Admit an HTTP request against its signed browser or API credential and live Peer.',
         parameters: [{ name: 'request', description: 'request headers from the HTTP or upgrade request.' }],

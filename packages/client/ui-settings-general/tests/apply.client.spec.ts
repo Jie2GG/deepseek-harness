@@ -81,13 +81,20 @@ function developerToolsRowOf(c: TestClient): DeveloperToolsRowInjected {
 }
 
 function actionInjectedOf(c: TestClient): SettingsDocumentActionInjected {
-  const entry = ownEntries(c, 'settings.action')[0]!
+  const entry = ownEntries(c, 'settings.action').find(row => row.component === SettingsDocumentAction)!
   return (entry.inject as unknown as () => SettingsDocumentActionInjected)()
 }
 
 function expectSeated(c: TestClient): void {
   for (const [name, component] of SEATS) {
-    expect(ownEntries(c, name).map(entry => entry.component)).toEqual([component])
+    const seated = ownEntries(c, name).map(entry => entry.component)
+    if (name === 'settings.action') {
+      // The document action joins the seat only while the Host exposes a writable
+      // settings document; the sign-out command is always present.
+      expect(seated).toContain(component)
+      continue
+    }
+    expect(seated).toEqual([component])
   }
 }
 
@@ -293,6 +300,8 @@ describe('ui-settings-general apply', () => {
     // The stored Host locale applies off-loopback; only the native document
     // action stays loopback-only.
     expect(c.ctx.locale.getSnapshot().active).toBe('zh')
+    // Off-loopback the native document action is withheld, leaving no row of this
+    // package in the header action seat.
     expect(ownEntries(c, 'settings.action')).toEqual([])
     const english = localeView('en', 1)
     settings.mutate.mockResolvedValueOnce(ok(english))

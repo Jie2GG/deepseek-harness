@@ -43,6 +43,8 @@ import { GeneralSection } from './GeneralSection.tsx'
 import { CurrentVersionRow } from './CurrentVersionRow.tsx'
 import { DeveloperToolsRow, type DeveloperToolsRowInjected } from './DeveloperToolsRow.tsx'
 import { SettingsDocumentAction } from './SettingsDocumentAction.tsx'
+import { SignInSection } from './SignInSection.tsx'
+import type { SignInSectionInjected } from './SignInSection.tsx'
 import type { SettingsDocumentActionInjected } from './SettingsDocumentAction.tsx'
 import { SettingsDocumentStore } from './settings-document-store.ts'
 import { HostReleasePrompt, type HostReleasePromptInjected } from './HostReleasePrompt.tsx'
@@ -55,6 +57,7 @@ export type {
   GeneralSectionComponentProps,
 } from './GeneralSection.tsx'
 export type { SettingsDocumentActionInjected, SettingsDocumentActionProps } from './SettingsDocumentAction.tsx'
+export type { SignInSectionInjected, SignInSectionProps } from './SignInSection.tsx'
 export type { SettingsDocumentState } from './settings-document-store.ts'
 export { SettingsDocumentStore } from './settings-document-store.ts'
 export type { SettingsKey } from './locales.ts'
@@ -271,6 +274,21 @@ export function apply(ctx: ClientContext): void {
     locale: NS,
     children: { 'settings.general.item': { kind: 'list', scope: 'root' } },
   }, GeneralSection))
+  // Deployment-level sign-in comes before everyday preferences, so this row sits directly
+  // above General. The secret belongs to the Host that served the page: a carrier that owns
+  // its transport, such as Desktop, has no browser session here and registers nothing.
+  const signOut = connection.signOut
+  /* v8 ignore next -- only a served page reaches this package with a browser session. */
+  if (signOut !== undefined) {
+    ctx.slots.inject('settings.section', () => ctx.slots.register({
+      name: 'settings.section',
+      id: 'signin',
+      order: -1,
+      label: () => t('signin.nav'),
+      locale: NS,
+      inject: (): SignInSectionInjected => ({ signOut }),
+    }, SignInSection))
+  }
   // The page's module system applies no plugin update from another Host release; this dialog offers the reload.
   const releasePromptInjected = (): HostReleasePromptInjected => ({
     dismissRelease: () => { ctx.modules.entries.dismissRelease() },

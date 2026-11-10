@@ -125,6 +125,11 @@ export class HostConnectionService extends Service implements HostConnectionHand
     return 'rejection' in admission ? admission.rejection : undefined
   }
 
+  /** Trust without identity: the authentication routes decide whether a Peer exists. */
+  trustRejection(request: ConnectionTrustRequest): 403 | undefined {
+    return this.isTrusted(request) ? undefined : 403
+  }
+
   /** Browser requests share an owner Peer; API HTTP does not depend on an attached socket. */
   admit(request: ConnectionTrustRequest): PeerAdmission {
     if (!this.isTrusted(request)) return { rejection: 403 }

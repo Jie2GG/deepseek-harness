@@ -9,6 +9,7 @@ import { GeneralSection } from '../src/client/GeneralSection.tsx'
 import { CloseLabel, HeaderContent, TriggerContent } from '../src/client/chrome.tsx'
 import type { TriggerContentProps } from '../src/client/chrome.tsx'
 import { SettingsDocumentAction } from '../src/client/SettingsDocumentAction.tsx'
+import { SignInSection } from '../src/client/SignInSection.tsx'
 import { DesktopChannelRow, DesktopChannelToast } from '../src/client/DesktopChannelRow.tsx'
 import { DesktopChannelSource } from '../src/client/desktop-channel-source.ts'
 import type { DesktopChannelChangeResult, DesktopChannelState } from '../src/types.ts'
@@ -32,7 +33,7 @@ import { DesktopUpdateBadge } from '../src/client/DesktopUpdateIndicator.tsx'
 import { HostReleasePrompt, type HostReleasePromptProps } from '../src/client/HostReleasePrompt.tsx'
 import type { DesktopUpdateView } from '../src/types.ts'
 
-afterEach(() => { cleanup(); vi.unstubAllEnvs() })
+afterEach(() => { cleanup(); vi.unstubAllEnvs(); vi.unstubAllGlobals() })
 
 // The seat's key domain is settings ∪ common; the stub answers from the
 // package dictionary and falls back to the key like the real chain.
@@ -322,7 +323,6 @@ describe('Host release change confirmation', () => {
   })
 })
 
-
 it('shows channel load errors and waits for an explicit selection to settle', async () => {
   let state: { state?: DesktopChannelState; failed: boolean; pending?: 'stable' } = { failed: false }
   const pending = Promise.withResolvers<undefined>()
@@ -400,7 +400,6 @@ it('dismisses a successful channel toast after its display lifetime', async () =
   } finally { view.unmount(); vi.useRealTimers() }
 })
 
-
 it('keeps the settings-file notification for ten seconds with a details action', async () => {
   vi.useFakeTimers()
   const dismiss = vi.fn()
@@ -432,4 +431,193 @@ it('labels uncertain settings saves without claiming they were not written', () 
 it('does not describe a saved selection that failed to apply as unsaved', () => {
   expect(zh['desktop.channel.result.apply']).toBe('设置保存异常')
   expect(en['desktop.channel.result.apply']).toBe('Settings save error')
+})
+
+describe('SignInSection', () => {
+  /** Script each `auth/*` answer in order and record every request the section sent. */
+  function scriptedFetch(replies: Array<{ status: number; body?: Record<string, unknown> }>) {
+    const requests: Array<{ endpoint: string; body: Record<string, unknown> }> = []
+    let index = 0
+    vi.stubGlobal('fetch', vi.fn(async (input: unknown, init?: { body?: string }) => {
+      const reply = replies[Math.min(index, replies.length - 1)] ?? { status: 0 }
+      index += 1
+      requests.push({
+        endpoint: String(input),
+        body: init?.body === undefined ? {} : JSON.parse(init.body) as Record<string, unknown>,
+      })
+      return { status: reply.status, json: () => Promise.resolve(reply.body ?? {}) }
+    }))
+    return requests
+  }
+
+  /** Open the panel over scripted Host answers; the first reply serves its state read. */
+  function opened(replies: Array<{ status: number; body?: Record<string, unknown> }>) {
+    const requests = scriptedFetch(replies)
+    const signOut = vi.fn((): Promise<void> => Promise.resolve())
+    render(<SignInSection {...kit} t={t} close={() => {}} signOut={signOut} />)
+    return { requests, signOut }
+  }
+
+  const field = (label: string): HTMLInputElement => screen.getByLabelText(label) as HTMLInputElement
+  const type = (label: string, value: string): void => {
+    fireEvent.change(field(label), { target: { value } })
+  }
+  const editRow = () => screen.getByRole('button', { name: new RegExp(en['signin.edit']) })
+  const ready = {
+    ok: true,
+    username: 'dsh',
+    hasPassword: true,
+    sessionKind: 'password',
+    expiresAt: Date.UTC(2026, 11, 20),
+  }
+
+  it('leads with the signed-in account and names how it got in', async () => {
+    opened([{ status: 200, body: ready }])
+    await waitFor(() => { expect(screen.getByText('dsh')).toBeTruthy() })
+    expect(screen.getByText(new RegExp(en['signin.sessionPassword']))).toBeTruthy()
+    expect(screen.queryByLabelText(en['signin.currentPassword'])).toBeNull()
+    expect(screen.getByRole('button', { name: en.signOut })).toBeTruthy()
+  })
+
+  it('edits the account and password behind that row', async () => {
+    const { requests } = opened([
+      { status: 200, body: ready },
+      { status: 200, body: { ok: true, username: 'operator', message: en['signin.saved'] } },
+    ])
+    await waitFor(() => { expect(editRow()).toBeTruthy() })
+    fireEvent.click(editRow())
+    expect(field(en['signin.account']).value).toBe('dsh')
+    expect(screen.getByRole('button', { name: en['signin.save'] }).hasAttribute('disabled')).toBe(true)
+    type(en['signin.account'], 'operator')
+    type(en['signin.currentPassword'], 'correct-horse')
+    type(en['signin.newPassword'], 'fresh-horse')
+    expect(screen.getByRole('button', { name: en['signin.save'] }).hasAttribute('disabled')).toBe(true)
+    type(en['signin.confirmPassword'], 'fresh-horse')
+    expect(field(en['signin.newPassword']).type).toBe('password')
+    fireEvent.click(screen.getByRole('button', { name: en['signin.reveal'] }))
+    expect(field(en['signin.newPassword']).type).toBe('text')
+    fireEvent.click(screen.getByRole('button', { name: en['signin.save'] }))
+    await waitFor(() => { expect(screen.getByText('operator')).toBeTruthy() })
+    expect(requests[1]?.endpoint).toBe('auth/change')
+    expect(requests[1]?.body).toEqual({
+      username: 'operator',
+      currentPassword: 'correct-horse',
+      password: 'fresh-horse',
+      confirmPassword: 'fresh-horse',
+    })
+    expect(screen.getByText(en['signin.saved'])).toBeTruthy()
+    // Leaving the edit view returns to the account row with the secrets cleared.
+    expect(screen.queryByLabelText(en['signin.currentPassword'])).toBeNull()
+  })
+
+  it('asks for a first password while the Host holds none', async () => {
+    const { requests } = opened([
+      { status: 200, body: { ok: true, username: 'dsh', hasPassword: false, sessionKind: 'launch' } },
+      { status: 200, body: { ok: true, username: 'dsh' } },
+    ])
+    await waitFor(() => { expect(screen.getByText(en['signin.sessionToken'])).toBeTruthy() })
+    fireEvent.click(editRow())
+    expect(screen.queryByLabelText(en['signin.currentPassword'])).toBeNull()
+    expect(screen.getByText(en['signin.setFirst'])).toBeTruthy()
+    type(en['signin.newPassword'], 'fresh-horse')
+    type(en['signin.confirmPassword'], 'fresh-horse')
+    fireEvent.click(screen.getByRole('button', { name: en['signin.save'] }))
+    await waitFor(() => { expect(requests[1]?.endpoint).toBe('auth/setup') })
+    expect(requests[1]?.body.currentPassword).toBeUndefined()
+  })
+
+  it('stays in the edit view and shows the Host refusal', async () => {
+    opened([
+      { status: 200, body: ready },
+      { status: 403, body: { ok: false, message: en['signin.failed'] } },
+    ])
+    await waitFor(() => { expect(editRow()).toBeTruthy() })
+    fireEvent.click(editRow())
+    type(en['signin.currentPassword'], 'wrong-horse')
+    type(en['signin.newPassword'], 'fresh-horse')
+    type(en['signin.confirmPassword'], 'fresh-horse')
+    fireEvent.click(screen.getByRole('button', { name: en['signin.save'] }))
+    await waitFor(() => { expect(screen.getByText(en['signin.failed'])).toBeTruthy() })
+    expect(field(en['signin.currentPassword'])).toBeTruthy()
+    expect(field(en['signin.newPassword']).value).toBe('')
+  })
+
+  it('signs out other devices only after a second press', async () => {
+    const { requests } = opened([
+      { status: 200, body: ready },
+      { status: 200, body: { ok: true, message: 'Signed out the other devices.' } },
+    ])
+    await waitFor(() => { expect(screen.getByRole('button', { name: en['signin.revoke'] })).toBeTruthy() })
+    fireEvent.click(screen.getByRole('button', { name: en['signin.revoke'] }))
+    expect(requests).toHaveLength(1)
+    fireEvent.click(screen.getByRole('button', { name: en['signin.revokeConfirm'] }))
+    await waitFor(() => { expect(screen.getByText('Signed out the other devices.')).toBeTruthy() })
+    expect(requests[1]?.endpoint).toBe('auth/revoke')
+    expect(requests[1]?.body).toEqual({})
+  })
+
+  it('ends this browser session from the row under the account', async () => {
+    const { signOut } = opened([{ status: 200, body: ready }])
+    await waitFor(() => { expect(screen.getByText('dsh')).toBeTruthy() })
+    fireEvent.click(screen.getByRole('button', { name: en.signOut }))
+    expect(signOut).toHaveBeenCalledTimes(1)
+  })
+
+  it('offers a fresh sign-in when the session behind the panel expired', async () => {
+    const { signOut } = opened([{ status: 401, body: { ok: false, message: en['signin.expired'] } }])
+    await waitFor(() => { expect(screen.getByText(en['signin.expired'])).toBeTruthy() })
+    fireEvent.click(screen.getByRole('button', { name: en.signOut }))
+    expect(signOut).toHaveBeenCalledTimes(1)
+  })
+
+  it('says so when the account state cannot be read', async () => {
+    opened([{ status: 0 }])
+    await waitFor(() => { expect(screen.getByText(en['signin.unavailable'])).toBeTruthy() })
+  })
+
+  it('treats an answer that names no account as unreadable', async () => {
+    opened([{ status: 200, body: { ok: true } }])
+    await waitFor(() => { expect(screen.getByText(en['signin.unavailable'])).toBeTruthy() })
+  })
+
+  it('falls back to its own copy when the Host explains nothing', async () => {
+    const { requests } = opened([
+      { status: 200, body: ready },
+      { status: 400, body: { ok: true } },
+      { status: 200, body: { ok: true, username: 'dsh' } },
+    ])
+    await waitFor(() => { expect(editRow()).toBeTruthy() })
+    fireEvent.click(editRow())
+    type(en['signin.currentPassword'], 'correct-horse')
+    type(en['signin.newPassword'], 'fresh-horse')
+    type(en['signin.confirmPassword'], 'fresh-horse')
+    fireEvent.click(screen.getByRole('button', { name: en['signin.save'] }))
+    await waitFor(() => { expect(screen.getByText(en['signin.failed'])).toBeTruthy() })
+    // The panel stays in the edit view so the caller can try again; this time the Host
+    // accepts without a message, and the panel returns to the account row.
+    type(en['signin.currentPassword'], 'correct-horse')
+    type(en['signin.newPassword'], 'fresh-horse')
+    type(en['signin.confirmPassword'], 'fresh-horse')
+    fireEvent.click(screen.getByRole('button', { name: en['signin.save'] }))
+    await waitFor(() => { expect(screen.getByRole('status').textContent).toBe(en['signin.saved']) })
+    expect(requests[1]?.endpoint).toBe('auth/change')
+    expect(requests[2]?.endpoint).toBe('auth/change')
+    expect(screen.queryByLabelText(en['signin.currentPassword'])).toBeNull()
+  })
+
+  it('names the sign-out of other devices in its own words when the Host is silent', async () => {
+    const { requests } = opened([
+      { status: 200, body: ready },
+      { status: 200, body: { ok: true, message: 'Signed out the other devices.' } },
+      { status: 200, body: { ok: true } },
+    ])
+    await waitFor(() => { expect(screen.getByRole('button', { name: en['signin.revoke'] })).toBeTruthy() })
+    fireEvent.click(screen.getByRole('button', { name: en['signin.revoke'] }))
+    fireEvent.click(screen.getByRole('button', { name: en['signin.revokeConfirm'] }))
+    await waitFor(() => { expect(screen.getByText('Signed out the other devices.')).toBeTruthy() })
+    fireEvent.click(screen.getByRole('button', { name: en['signin.revoke'] }))
+    fireEvent.click(screen.getByRole('button', { name: en['signin.revokeConfirm'] }))
+    await waitFor(() => { expect(screen.getByRole('status').textContent).toBe(en['signin.revoke']) })
+    expect(requests.filter(call => call.endpoint === 'auth/revoke')).toHaveLength(2)
+  })
 })
