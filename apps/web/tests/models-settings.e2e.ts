@@ -302,6 +302,9 @@ describe('web e2e: Models settings page configures a dormant provider', () => {
     await custom.getByLabel('Provider ID').fill('acme-gateway')
     await custom.getByLabel('显示名称').fill('Acme Gateway')
     await custom.getByLabel('API 地址').fill('https://gateway.acme.example/v1')
+    // One entry in seconds moves both millisecond deadlines: a gateway whose
+    // first token arrives later than either of them ends the same way.
+    await custom.getByLabel('模型超时时间（秒）').fill('1800')
     // No provider-scoped reasoning control: effort is a per-model capability
     // and the models under one provider disagree about it, so each model row
     // declares its own levels instead.
@@ -324,6 +327,8 @@ describe('web e2e: Models settings page configures a dormant provider', () => {
     const document = await readFile(join(scaffold.harnessHome, 'profiles', 'scaffold', 'cordis.patch.yml'), 'utf8')
     expect(document).toContain('acme-gateway:')
     expect(document).toContain('reasoningEfforts:')
+    expect(document).toContain('streamIdleTimeoutMs: 1800000')
+    expect(document).toContain('timeoutMs: 1800000')
     await expect(scaffold.ctx.llm.resolveModelInfo('acme-gateway', 'acme-large')).resolves.toMatchObject({
       context: { contextWindow: 1_000_000 },
       inputModalities: ['text', 'image'],
@@ -354,6 +359,8 @@ describe('web e2e: Models settings page configures a dormant provider', () => {
     expect(await protocol.inputValue()).toBe('openai-completions')
     const name = dialog.getByLabel('显示名称', { exact: true })
     expect(await name.inputValue()).toBe('Acme Gateway')
+    // The stored milliseconds come back in the unit the field speaks.
+    expect(await dialog.getByLabel('模型超时时间（秒）').inputValue()).toBe('1800')
     await dialog.getByRole('button', { name: '模型选项 1' }).click()
     expect(await dialog.getByRole('group', { name: '输入类型 1' }).getByRole('checkbox', { name: '图片' }).isChecked()).toBe(true)
     // The stored levels come back as rows beside the values they send.

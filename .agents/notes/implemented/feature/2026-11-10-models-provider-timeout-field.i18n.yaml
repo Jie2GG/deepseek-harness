@@ -1,0 +1,22 @@
+# Bilingual-pair consistency record for 2026-11-10-models-provider-timeout-field.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write .agents/notes/implemented/feature/2026-11-10-models-provider-timeout-field.md
+/agent-note-models-provider-timeout-field:
+  en: 099df1b993be77e6
+  zh: c27c6935641648bd
+/agent-note-models-provider-timeout-field/problem:
+  en: df5fbb76fbe95ea7
+  zh: 046c116189e6b7d2
+/agent-note-models-provider-timeout-field/decision:
+  en: 8dc69b28160dd788
+  zh: 23a73dac73edab7a
+/agent-note-models-provider-timeout-field/alternatives-considered:
+  en: 71ee6a208b323422
+  zh: f0d6df8f999e76f7
+/agent-note-models-provider-timeout-field/consequences:
+  en: 425fc8568796070c
+  zh: c30a1d3df3e79cf1
+/agent-note-models-provider-timeout-field/testing:
+  en: 5872c71ee3f6d923
+  zh: 204fbb4e69c5bbb0

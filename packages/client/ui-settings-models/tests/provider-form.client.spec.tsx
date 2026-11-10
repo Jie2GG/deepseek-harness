@@ -44,6 +44,8 @@ const PiAiConfig = Schema.object({
       ]),
     })),
     reasoning: Schema.union(['off', 'high']),
+    streamIdleTimeoutMs: Schema.number(),
+    timeoutMs: Schema.number(),
   })),
 })
 
@@ -1035,7 +1037,9 @@ describe('hand-declared providers', () => {
 
     mountCard()
     fireEvent.change(screen.getByLabelText(en.customRoute), { target: { value: 'acme' } })
-    expect(fields()).toEqual([en.customRoute, en.customDisplayName, en.baseUrl, en.customApi, en.keyInput])
+    expect(fields()).toEqual([
+      en.customRoute, en.customDisplayName, en.baseUrl, en.customTimeout, en.customApi, en.keyInput,
+    ])
     cleanup()
 
     // A shipped route's models each carry their own protocol, so its editor
@@ -1043,6 +1047,9 @@ describe('hand-declared providers', () => {
     await mountSection({ providers: { openai: { apiKeyEnv: 'OPENAI_API_KEY' } } })
     openEditor('openai')
     fireEvent.click(screen.getByText(en.customized))
+    // A shipped route's timeouts come from its catalog entry, so the field that
+    // widens a gateway's belongs to declared routes only.
+    expect(screen.queryByLabelText(en.customTimeout)).toBeNull()
     expect(fields()).toEqual([en.keyInput, en.baseUrl])
     cleanup()
 
@@ -1053,7 +1060,122 @@ describe('hand-declared providers', () => {
       declaredRoutes: ['acme-gateway'],
     })
     openEditor('acme-gateway')
-    expect(fields()).toEqual([en.keyInput, en.customDisplayName, en.baseUrl, en.customApi])
+    expect(fields()).toEqual([en.keyInput, en.customDisplayName, en.baseUrl, en.customTimeout, en.customApi])
+  })
+
+  it('writes both timeout keys from the seconds the field takes', async () => {
+    const { mutate, onClose } = mountCard()
+    fireEvent.change(screen.getByLabelText(en.customRoute), { target: { value: 'acme-gateway' } })
+    fireEvent.change(screen.getByLabelText(en.baseUrl), { target: { value: 'https://gateway.acme.example/v1' } })
+    fireEvent.change(screen.getByLabelText(en.customTimeout), { target: { value: '1800' } })
+    fireEvent.click(screen.getByRole('button', { name: en.addModel }))
+    fireEvent.change(screen.getByLabelText(`${en.modelId} 1`), { target: { value: 'acme-large' } })
+    fireEvent.click(screen.getByText(en.create))
+
+    await waitFor(() => { expect(onClose).toHaveBeenCalledWith(true) })
+    // A slow first token is bounded by both millisecond keys, so the one entry
+    // raises them together rather than leaving the other to cut the request off.
+    expect(firstMutate(mutate).ops[0]?.value).toMatchObject({
+      streamIdleTimeoutMs: 1_800_000,
+      timeoutMs: 1_800_000,
+    })
+  })
+
+  it('writes neither timeout key when the field is left blank', async () => {
+    const { mutate, onClose } = mountCard()
+    fireEvent.change(screen.getByLabelText(en.customRoute), { target: { value: 'acme-gateway' } })
+    fireEvent.change(screen.getByLabelText(en.baseUrl), { target: { value: 'https://gateway.acme.example/v1' } })
+    fireEvent.click(screen.getByRole('button', { name: en.addModel }))
+    fireEvent.change(screen.getByLabelText(`${en.modelId} 1`), { target: { value: 'acme-large' } })
+    fireEvent.click(screen.getByText(en.create))
+
+    await waitFor(() => { expect(onClose).toHaveBeenCalledWith(true) })
+    const profile = firstMutate(mutate).ops[0]?.value as Record<string, JsonValue>
+    expect(profile).not.toHaveProperty('streamIdleTimeoutMs')
+    expect(profile).not.toHaveProperty('timeoutMs')
+  })
+
+  it('refuses a duration that spells its unit, naming the field that caused it', async () => {
+    const { mutate, onClose } = mountCard()
+    fireEvent.change(screen.getByLabelText(en.customRoute), { target: { value: 'acme-gateway' } })
+    fireEvent.change(screen.getByLabelText(en.baseUrl), { target: { value: 'https://gateway.acme.example/v1' } })
+    fireEvent.change(screen.getByLabelText(en.customTimeout), { target: { value: '30m' } })
+
+    expect(screen.getByText(en.customTimeoutInvalid)).toBeTruthy()
+    // Nothing but a readable duration can be created: the value is stored in
+    // milliseconds, and an unreadable field has no millisecond meaning to send.
+    expect(screen.getByRole('button', { name: en.create }).hasAttribute('disabled')).toBe(true)
+    fireEvent.click(screen.getByRole('button', { name: en.create }))
+    expect(mutate).not.toHaveBeenCalled()
+    expect(onClose).not.toHaveBeenCalled()
+  })
+
+  it('reads the stored pair back as seconds and rewrites both keys together', async () => {
+    const { mutate } = await mountSection({
+      providers: {
+        'acme-gateway': {
+          api: 'openai-completions', baseURL: 'https://acme.test/v1',
+          streamIdleTimeoutMs: 1_800_000, timeoutMs: 1_800_000,
+        },
+      },
+      declaredRoutes: ['acme-gateway'],
+    })
+    openEditor('acme-gateway')
+
+    const timeout = screen.getByLabelText<HTMLInputElement>(en.customTimeout)
+    expect(timeout.value).toBe('1800')
+    expect(timeout.placeholder).toBe(en.customTimeoutPlaceholder)
+    fireEvent.change(timeout, { target: { value: '90' } })
+    fireEvent.click(screen.getByText(en.apply))
+
+    await waitFor(() => { expect(mutate).toHaveBeenCalledTimes(1) })
+    expect(firstMutate(mutate).ops).toEqual([
+      { op: 'set', path: ['providers', 'acme-gateway', 'streamIdleTimeoutMs'], value: 90_000 },
+      { op: 'set', path: ['providers', 'acme-gateway', 'timeoutMs'], value: 90_000 },
+    ])
+  })
+
+  it('clears both timeout keys when the field is emptied', async () => {
+    const { mutate } = await mountSection({
+      providers: {
+        'acme-gateway': {
+          api: 'openai-completions', baseURL: 'https://acme.test/v1',
+          streamIdleTimeoutMs: 90_000, timeoutMs: 90_000,
+        },
+      },
+      declaredRoutes: ['acme-gateway'],
+    })
+    openEditor('acme-gateway')
+
+    fireEvent.change(screen.getByLabelText(en.customTimeout), { target: { value: '' } })
+    fireEvent.click(screen.getByText(en.apply))
+
+    await waitFor(() => { expect(mutate).toHaveBeenCalledTimes(1) })
+    // Clearing restores the layer beneath the field, so neither key stays pinned.
+    expect(firstMutate(mutate).ops).toEqual([
+      { op: 'unset', path: ['providers', 'acme-gateway', 'streamIdleTimeoutMs'] },
+      { op: 'unset', path: ['providers', 'acme-gateway', 'timeoutMs'] },
+    ])
+  })
+
+  it('leaves a hand-written timeout pair untouched while another field is edited', async () => {
+    const { mutate } = await mountSection({
+      providers: {
+        'acme-gateway': { api: 'openai-completions', baseURL: 'https://acme.test/v1', timeoutMs: 600_000 },
+      },
+      declaredRoutes: ['acme-gateway'],
+    })
+    openEditor('acme-gateway')
+
+    // One key without the other is a cordis.patch.yml author's choice; the card
+    // renders it and writes neither until the field itself is touched.
+    expect(screen.getByLabelText<HTMLInputElement>(en.customTimeout).value).toBe('600')
+    fireEvent.change(screen.getByLabelText(en.customDisplayName), { target: { value: 'Acme 网关' } })
+    fireEvent.click(screen.getByText(en.apply))
+
+    await waitFor(() => { expect(mutate).toHaveBeenCalledTimes(1) })
+    expect(firstMutate(mutate).ops)
+      .toEqual([{ op: 'set', path: ['providers', 'acme-gateway', 'displayName'], value: 'Acme 网关' }])
   })
 
   it('renames a declared route and falls back to its id when the name is cleared', async () => {

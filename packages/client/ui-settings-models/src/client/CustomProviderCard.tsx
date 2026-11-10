@@ -17,6 +17,13 @@
  * and at least one model — are required here rather than at load, so the
  * failure names the field while the user is still looking at it.
  *
+ * The optional timeout beside the endpoint is the one route field a gateway may
+ * need widened: a hand-declared route has no catalog entry that says how long
+ * its first token may take, and a slow prefill is cut off by two profile keys,
+ * `streamIdleTimeoutMs` and `timeoutMs`. The card takes seconds and writes both
+ * keys with the same value, so one entry cannot be raised past the other. Blank
+ * writes neither and leaves the adapter defaults in place.
+ *
  * There is deliberately no provider-scoped reasoning-effort control, here or
  * on the editor card: effort is a per-MODEL capability, and the models under
  * one provider disagree about it, so a provider-scoped control can only be set
@@ -35,6 +42,7 @@ import { validateDeepSeekModels } from './DeepSeekModelsEditor.tsx'
 import { ModelListEditor } from './ModelListEditor.tsx'
 import type { ModelDraft } from './ModelListEditor.tsx'
 import { validateReasoningEfforts } from './ModelReasoningEfforts.tsx'
+import { parseSecondsToMs } from './timeout-value.ts'
 import { deriveKeyRef } from './store.ts'
 import { protocolLabel } from './protocol-label.ts'
 import type { ModelsOperations } from './operations.ts'
@@ -104,6 +112,7 @@ export function CustomProviderCard(props: CustomProviderCardProps): ReactNode {
   const [route, setRoute] = useState('')
   const [displayName, setDisplayName] = useState('')
   const [baseURL, setBaseURL] = useState('')
+  const [timeoutDraft, setTimeoutDraft] = useState('')
   const [protocol, setProtocol] = useState(protocols[0] ?? '')
   const [keyDraft, setKeyDraft] = useState('')
   const [models, setModels] = useState<readonly ModelDraft[]>([])
@@ -125,6 +134,12 @@ export function CustomProviderCard(props: CustomProviderCardProps): ReactNode {
   const routeTaken = taken.includes(route)
   const normalizedBaseURL = baseURL.trim()
   const baseUrlInvalid = baseURL.length > 0 && !isHttpUrl(normalizedBaseURL)
+  // Seconds on screen, milliseconds in the profile. A blank field parses to
+  // nothing and writes no key; unreadable text keeps its own failure and the
+  // submit gate below refuses it.
+  const parsedTimeout = parseSecondsToMs(timeoutDraft)
+  const timeoutMs = parsedTimeout === undefined || Number.isNaN(parsedTimeout) ? undefined : parsedTimeout
+  const timeoutInvalid = Number.isNaN(parsedTimeout)
   // Rows are checked by the same per-row validator the editor cards use, so a
   // bad row is named by its position here too. Capacities have route-level
   // fallbacks; what a route cannot default is at least one model. Every row of
@@ -137,7 +152,7 @@ export function CustomProviderCard(props: CustomProviderCardProps): ReactNode {
   const keyValue = keyDraft.trim()
   const ready = route.length > 0 && !routeInvalid && !routeTaken
     && normalizedBaseURL.length > 0 && !baseUrlInvalid && models.length > 0 && modelFailure === undefined
-    && keyFailure === undefined
+    && keyFailure === undefined && !timeoutInvalid
   // The one blocked gate worth a line under the form. A satisfied card says
   // nothing at all rather than printing an empty paragraph.
   const hint = failure !== undefined || ready
@@ -149,6 +164,9 @@ export function CustomProviderCard(props: CustomProviderCardProps): ReactNode {
     // fallback arm below reads "no models yet", so an unmet route gate would
     // fall through to it and contradict the filled-in list right above.
     || route.length === 0 || routeInvalid || routeTaken || baseUrlInvalid
+    // The timeout field prints its own failure too, so a card blocked only by an
+    // unreadable duration stays silent here rather than naming a satisfied gate.
+    || timeoutInvalid
     ? undefined
     : normalizedBaseURL.length === 0
       ? t('customNeedsBaseUrl')
@@ -170,6 +188,7 @@ export function CustomProviderCard(props: CustomProviderCardProps): ReactNode {
         ...storesKey ? { apiKeyEnv: keyRef } : {},
         api: protocol,
         baseURL: normalizedBaseURL,
+        ...timeoutMs === undefined ? {} : { streamIdleTimeoutMs: timeoutMs, timeoutMs },
         models: models.map(model => ({ ...model })),
       }
       // `taken` is a snapshot too, so the id check alone cannot see a route
@@ -260,6 +279,23 @@ export function CustomProviderCard(props: CustomProviderCardProps): ReactNode {
         />
       </div>
       {baseUrlInvalid ? <p className={styles['error']}>{t('customBaseUrlInvalid')}</p> : null}
+      <div className={styles['field']}>
+        <span className={styles['fieldLabel']}>{t('customTimeout')}</span>
+        <input
+          className={styles['input']}
+          type="text"
+          inputMode="decimal"
+          value={timeoutDraft}
+          placeholder={t('customTimeoutPlaceholder')}
+          aria-label={t('customTimeout')}
+          aria-invalid={timeoutInvalid}
+          disabled={profileDisabled}
+          onChange={(event) => { setTimeoutDraft(event.target.value) }}
+        />
+        {timeoutInvalid
+          ? <p className={styles['error']}>{t('customTimeoutInvalid')}</p>
+          : <p className={styles['advancedHint']}>{t('customTimeoutHint')}</p>}
+      </div>
       <div className={styles['field']}>
         <span className={styles['fieldLabel']}>{t('customApi')}</span>
         <select
