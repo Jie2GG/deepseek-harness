@@ -49,7 +49,7 @@ it('preserves built-in order, groups, icons, command identities, and captured ac
     ['session.fork/fork', 'Fork session', true, 'session.fork', undefined, undefined],
     ['session.id/copy', 'Copy Session ID', true, undefined, true, undefined],
     ['session.archive/archive', 'Archive session', true, 'session.archive', true, true],
-    ['session.delete/delete', 'Delete session', true, undefined, undefined, undefined],
+    ['session.delete/delete', 'Delete session', true, undefined, undefined, true],
   ])
   menu.dispose()
   for (const id of views.map(item => item.id)) b.open().select(id)

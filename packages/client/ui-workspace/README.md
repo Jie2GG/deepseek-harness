@@ -121,7 +121,7 @@ Each registration declares a **directory-flow child hole** (`single` kind: `conv
 
 ### Session row actions
 
-Built-in Session menu actions register structured contributions through `ctx.contextMenus`: pin (100), rename (200), fork (300), copy ID (450), and archive (600). Native directory reveal belongs to ui-open-in-app (500). Rename, fork, and archive associate existing command IDs for live shortcut display; clicks retain their captured Session and invoke the existing business callback. Pin and archive also retain their hover-button Slot entries.
+Built-in Session menu actions register structured contributions through `ctx.contextMenus`: pin (100), rename (200), fork (300), copy ID (450), archive (600), and delete (700); archive and delete render in the menu footer, after the other entries. Native directory reveal belongs to ui-open-in-app (500). Rename, fork, and archive associate existing command IDs for live shortcut display; clicks retain their captured Session and invoke the existing business callback. Pin and archive also retain their hover-button Slot entries.
 
 The legacy `sidebar.workspaces.session.menu.item` Slot remains for external React entries. It receives `sessionId`, `displayTitle`, and `useMenuOpenState` for dismissal. Legacy entries retain their own order and render together before Archive; their priority no longer replaces built-in data actions. New contributions use the [menu service](../ui-context-menu/README.md). Built-in visibility tracks permissions and pin/archive membership while open; dialogs and notices remain frame-wide overlays.
 

@@ -70,7 +70,7 @@ export function registerSessionMenus(ctx: Context, actions: Actions): void {
   register('delete', 700, ['workspace/deleteSession'], target => (
     allowed(target, 'workspace/deleteSession')
       ? [{
-        id: 'delete', label: t('menu.deleteSession'), icon: { key: 'workspace.delete' },
+        id: 'delete', label: t('menu.deleteSession'), icon: { key: 'workspace.delete' }, afterContent: true,
         run: () => { actions.requestSessionDelete(target.sessionId) },
       }]
       : []

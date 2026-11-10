@@ -122,7 +122,7 @@ Session 行可通过 Tab 聚焦，使用不带修饰键的 Enter 或空格打开
 <a id="session-row-actions"></a>
 ### Session 行 action
 
-内置 Session 菜单动作通过 `ctx.contextMenus` 注册结构化贡献：置顶（100）、重命名（200）、分支（300）、复制 ID（450）和归档（600）。本机目录定位由 ui-open-in-app 提供（500）。重命名、分支和归档关联已有命令 ID，以显示实时快捷键；点击仍针对捕获的 Session 调用现有业务回调。置顶和归档同时保留悬停按钮 Slot 条目。
+内置 Session 菜单动作通过 `ctx.contextMenus` 注册结构化贡献：置顶（100）、重命名（200）、分支（300）、复制 ID（450）、归档（600）和删除（700）；归档与删除渲染在菜单底部，排在其他条目之后。本机目录定位由 ui-open-in-app 提供（500）。重命名、分支和归档关联已有命令 ID，以显示实时快捷键；点击仍针对捕获的 Session 调用现有业务回调。置顶和归档同时保留悬停按钮 Slot 条目。
 
 旧 `sidebar.workspaces.session.menu.item` Slot 保留给外部 React 条目，提供 `sessionId`、`displayTitle` 和用于关闭菜单的 `useMenuOpenState`。旧条目保持彼此顺序，集中显示在归档之前；其 priority 不再替换内置数据动作。新贡献使用[菜单服务](../ui-context-menu/README.zh.md)。内置动作在菜单打开时持续响应权限和置顶／归档状态；对话框与提示仍为应用级浮层。
 

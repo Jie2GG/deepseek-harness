@@ -415,14 +415,14 @@ export interface SessionArchiveConfirmInjected {
 }
 
 /**
- * Delete action share (menu row and hover button). Deleting removes the Session
- * together with its log and cannot be undone, so the row never deletes by
- * itself: it raises the confirmation, which names what is lost.
+ * Delete action share (menu row). Deleting removes the Session together with
+ * its log and cannot be undone, so the entry never deletes by itself: it raises
+ * the confirmation, which names what is lost.
  */
 export interface DeleteSessionInjected {
   /**
    * Ask the user to confirm deleting this Session. The owner resolves the
-   * display title, so a row and a menu entry raise the same confirmation.
+   * display title, so every menu entry raises the same confirmation.
    */
   requestSessionDelete: (sessionId: SessionId) => void
 }

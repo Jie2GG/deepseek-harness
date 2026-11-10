@@ -1,5 +1,5 @@
 /**
- * Delete hover button and the confirmation that guards an irreversible removal.
+ * The confirmation that guards an irreversible Session removal.
  */
 import { useState } from 'react'
 // Type-only: the family keys each provider merges; a key this program did not
@@ -8,39 +8,12 @@ import type {} from '@deepseek-ai/dsh-agent/types'
 import type {} from '@deepseek-ai/dsh-jobs/view'
 import type {} from '@deepseek-ai/dsh-schedule/client'
 import type {} from '@deepseek-ai/dsh-subagent/client'
-import { Button, IconTrashOutlineRegular, Modal, Tooltip } from '@deepseek-ai/dsh-client-ui-primitives'
+import { Button, Modal } from '@deepseek-ai/dsh-client-ui-primitives'
 import type {
-  DeleteSessionInjected, SessionDeleteConfirmInjected, SessionDeleteConfirmProps,
-  SessionDeleteConfirmRequest, SessionRowActionProps,
+  SessionDeleteConfirmInjected, SessionDeleteConfirmProps, SessionDeleteConfirmRequest,
 } from '../contract/slots.ts'
 import { sessionActivityLine } from './ArchiveSession.tsx'
-import css from '../rows/Rows.module.css'
 import browserCss from '../rows/WorkspaceBrowser.module.css'
-
-/**
- * Hover button: delete this Session and its log. Absent while the Session's
- * access snapshot excludes the delete endpoint.
- * @param props - owner share, the access Hook, and the delete share.
- * @returns the button, or nothing when this caller may not delete the Session.
- */
-export function DeleteSessionRowButton({
-  sessionId, useSessionAccess, requestSessionDelete, t,
-}: SessionRowActionProps<DeleteSessionInjected>) {
-  const allowed = useSessionAccess(sessionId, 'workspace/deleteSession')
-  if (!allowed) return null
-  return (
-    <Tooltip label={t('actions.delete')} side="bottom" align="end" delayMs={500} portal>
-      <button
-        type="button"
-        className={css.iconButton}
-        aria-label={t('menu.deleteSession')}
-        onClick={() => { requestSessionDelete(sessionId) }}
-      >
-        <IconTrashOutlineRegular size={14} />
-      </button>
-    </Tooltip>
-  )
-}
 
 /**
  * The `shell.overlay` entry: nothing while no confirmation is pending,

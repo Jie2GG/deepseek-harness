@@ -51,7 +51,7 @@ import { UiWorkspaceService } from './navigation.ts'
 import { createWorkspaceViewStore } from './stores.ts'
 import { WorkspaceBrowser } from './rows/WorkspaceBrowser.tsx'
 import { ArchiveSessionRowButton, SessionArchiveConfirmDialog } from './session-actions/ArchiveSession.tsx'
-import { DeleteSessionRowButton, SessionDeleteConfirmDialog } from './session-actions/DeleteSession.tsx'
+import { SessionDeleteConfirmDialog } from './session-actions/DeleteSession.tsx'
 import { derive } from './session-actions/derived.ts'
 import { registerSessionMenus } from './session-actions/context-menus.tsx'
 import { PinSessionRowButton } from './session-actions/PinSession.tsx'
@@ -217,8 +217,8 @@ export function apply(ctx: Context): void {
   })
   installWorkspaceShortcuts(ctx, uiWorkspace, shortcutControls, archiveInjected().archiveSession,
     (reason) => { notify({ kind: 'shortcutForkFailed', reason }) })
-  // Deleting costs the log, so the row never deletes by itself: it raises the
-  // confirmation, which requires an explicit acknowledgement before the
+  // Deleting costs the log, so the row menu never deletes by itself: it raises
+  // the confirmation, which requires an explicit acknowledgement before the
   // removal runs.
   const deleteInjected = (): DeleteSessionInjected => ({
     requestSessionDelete: (sessionId) => {
@@ -380,7 +380,6 @@ export function apply(ctx: Context): void {
   ctx.slots.inject('sidebar.workspaces.session.row.action', function* () {
     yield ctx.slots.register({ name: 'sidebar.workspaces.session.row.action', id: 'archive', order: 100, locale: NS, inject: archiveInjected }, ArchiveSessionRowButton)
     yield ctx.slots.register({ name: 'sidebar.workspaces.session.row.action', id: 'pin', order: 200, locale: NS, inject: pinInjected }, PinSessionRowButton)
-    yield ctx.slots.register({ name: 'sidebar.workspaces.session.row.action', id: 'delete', order: 300, locale: NS, inject: deleteInjected }, DeleteSessionRowButton)
   })
   // The surfaces the actions raise live in the frame-wide layer: they must
   // outlive the row menu the action sat in.

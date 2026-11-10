@@ -31,7 +31,7 @@ import type {
 import {
   ArchiveSessionRowButton, SessionArchiveConfirmDialog,
 } from '../src/client/session-actions/ArchiveSession.tsx'
-import { DeleteSessionRowButton, SessionDeleteConfirmDialog } from '../src/client/session-actions/DeleteSession.tsx'
+import { SessionDeleteConfirmDialog } from '../src/client/session-actions/DeleteSession.tsx'
 import { PinSessionRowButton } from '../src/client/session-actions/PinSession.tsx'
 import { SessionRenameDialog } from '../src/client/session-actions/RenameSession.tsx'
 import { RowActionToast } from '../src/client/session-actions/RowActionToast.tsx'
@@ -168,21 +168,6 @@ describe('archive action', () => {
 })
 
 describe('delete action', () => {
-  const deleteShare = () => ({ requestSessionDelete: vi.fn() })
-
-  it('offers no delete button without access and asks instead of deleting', () => {
-    const denied = render(
-      <DeleteSessionRowButton {...actionRow} requestSessionDelete={vi.fn()}
-        useSessionAccess={vi.fn(() => false)} />,
-    )
-    expect(denied.container.innerHTML).toBe('')
-
-    const share = deleteShare()
-    render(<DeleteSessionRowButton {...actionRow} {...share} />)
-    fireEvent.click(screen.getByRole('button', { name: '删除对话' }))
-    expect(share.requestSessionDelete).toHaveBeenCalledWith(sid('one'))
-  })
-
   /** The dialog over a test-owned request source, settling the way apply does. */
   function deleteDialog(deleteSessionNow: SessionDeleteConfirmInjected['deleteSessionNow']) {
     const request = createSnapshotStore<SessionDeleteConfirmRequest | null>(null)
