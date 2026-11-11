@@ -7,7 +7,7 @@
 import { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 import { CompactionEngine, ManualCompactionError } from '@deepseek-ai/dsh-compaction'
-import type { CompactionResult, CompactionTrigger } from '@deepseek-ai/dsh-compaction'
+import type { CompactionResult, CompactionTrigger, ManualCompactionStart } from '@deepseek-ai/dsh-compaction'
 import type { EpochHeader, Session, SessionSeq } from '@deepseek-ai/dsh-session'
 import { CONTEXT_WINDOW_EXCEEDED_CODE, LlmError } from '@deepseek-ai/dsh-llm'
 import type { LlmCallConfig } from '@deepseek-ai/dsh-llm'
@@ -397,21 +397,29 @@ export class BasicCompactionEngine extends CompactionEngine {
   }
 
   /**
-   * Force one useful idle-session compaction below the pressure threshold, and
-   * resolve only after its standalone marker pair is durably checkpointed.
+   * Reserve one manual compaction synchronously and start its durable work.
    * @param agent - idle agent whose next-turn admission this call reserves.
-   * @param signal - cancellation scoped to this compaction request.
+   * @param signal - cancellation scoped to the compaction operation itself.
    * @param sourceCommandId - initiating command identity for presentation correlation.
-   * @returns the committed result, or `null` when no safe useful range exists.
+   * @throws ManualCompactionError synchronously when the agent is not idle, or
+   * when the request or its maintenance task is already cancelled.
+   * @returns a running operation with its settlement promise, or `nothing`.
    */
   override compactNow(
     agent: Agent,
     signal: AbortSignal,
     sourceCommandId?: CommandId,
-  ): Promise<CompactionResult | null> {
+  ): ManualCompactionStart {
     signal.throwIfAborted()
+    const settlement = Promise.withResolvers<CompactionResult | null>()
+    // A reservation that fails never hands its operation to the caller, so this
+    // absorbs the settlement instead of reporting the same failure twice.
+    void settlement.promise.catch(() => {})
+    // The maintenance task selects its range before its first await, so the
+    // reservation is known by the time `runMaintenance` hands back its promise.
+    const reservation: { reserved: boolean; failure?: Error } = { reserved: false }
     try {
-      return agent.runMaintenance(async (agentSignal) => {
+      const operation = agent.runMaintenance(async (agentSignal) => {
         const operationSignal = AbortSignal.any([agentSignal, signal])
         try {
           operationSignal.throwIfAborted()
@@ -420,8 +428,12 @@ export class BasicCompactionEngine extends CompactionEngine {
             this.ctx.tokenMeter.measure(agent.session),
             0,
           )
-          if (range === null) return null
-          return await compactSurfaceRegion(
+          if (range === null) {
+            settlement.resolve(null)
+            return null
+          }
+          reservation.reserved = true
+          const result = await compactSurfaceRegion(
             this.regionDependencies(),
             agent.session,
             range.start,
@@ -437,19 +449,34 @@ export class BasicCompactionEngine extends CompactionEngine {
             },
             operationSignal,
           )
+          settlement.resolve(result)
+          return result
         } catch (error: unknown) {
-          if (agentSignal.aborted && operationSignal.reason === agentSignal.reason) {
-            throw new ManualCompactionError(
+          const source = error instanceof Error ? error : new Error(String(error), { cause: error })
+          const failure: Error = agentSignal.aborted && operationSignal.reason === agentSignal.reason
+            ? new ManualCompactionError(
               'cancelled',
               'manual compaction was cancelled',
-              { cause: error },
+              { cause: source },
             )
-          }
-          operationSignal.throwIfAborted()
-          throw error
+            : operationSignal.aborted && operationSignal.reason instanceof Error
+              ? operationSignal.reason
+              : source
+          settlement.reject(failure)
+          if (!reservation.reserved) reservation.failure = failure
+          throw failure
         }
       })
+      // `done` is how every caller observes this attempt's failure; the agent's
+      // own idle-task settlement keeps its own copy.
+      void operation.catch(() => {})
+      if (reservation.failure !== undefined) throw reservation.failure
+      return reservation.reserved
+        ? { kind: 'running', done: settlement.promise }
+        : { kind: 'nothing' }
     } catch (error: unknown) {
+      if (error instanceof ManualCompactionError) throw error
+      settlement.reject(error)
       throw new ManualCompactionError(
         'busy',
         'manual compaction requires an idle agent with no waking queued work',

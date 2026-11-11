@@ -10,10 +10,10 @@
 import { Context, Service } from '@deepseek-ai/cordis'
 import type { Session, SessionSeq } from '@deepseek-ai/dsh-session'
 import type { CommandId } from '@deepseek-ai/dsh-commands/brand'
-import type { CompactionResult } from './types.ts'
+import type { CompactionResult, ManualCompactionStart } from './types.ts'
 import type { CompactionCheckpointSource } from './checkpoint.ts'
 
-export type { CompactionResult } from './types.ts'
+export type { CompactionResult, ManualCompactionStart } from './types.ts'
 export { CompactionId } from './brand.ts'
 export { toolPairingBalancedAfter, toolPairingBalancedBefore } from './tool-pairing.ts'
 // The checkpoint source constructor and predicate are declared on the cordis-free
@@ -141,29 +141,30 @@ export abstract class CompactionEngine extends Service {
 
   /**
    * Explicitly compact useful history even below automatic pressure thresholds.
-   * Implementations synchronously start an idle task before any asynchronous
-   * work, select a useful range without writing on a no-op, then
-   * append a standalone `compaction/start` before summarization. That durable
-   * marker is the compaction lock until one `compaction/end` attempt. Later waking
-   * prompts remain accepted in FIFO order and start only after the optional
-   * durability checkpoint and idle-task settlement. Context injected while the
-   * summary runs may sit between the marker pair; only the selected span must
-   * remain stable.
+   * Implementations reserve the agent's idle maintenance task and select a
+   * useful range synchronously, so a human command can answer before the durable
+   * transaction settles, and then let the attempt run to its end unattached to
+   * that command's request. The durable `compaction/start` marker is the
+   * compaction lock until one `compaction/end` attempt. Later waking prompts
+   * remain accepted in FIFO order and start only after the optional durability
+   * checkpoint and idle-task settlement. Context injected while the summary runs
+   * may sit between the marker pair; only the selected span must remain stable.
    *
    * @param agent - idle agent whose durable history should be compacted.
-   * @param signal - cancellation scoped to this compaction request.
+   * @param signal - cancellation scoped to the compaction operation itself, not
+   *   to whoever asked for it.
    * @param sourceCommandId - initiating command identity for a manual compaction.
-   * @returns the compaction result, or `null` when no safe useful range exists.
-   * @throws {@link ManualCompactionError} for expected busy, agent-cancellation,
-   * changed-span, summarization/shrink, commit-stage, or persistence failures;
-   * an aborted request preserves its exact abort reason. Failed attempts remain
-   * visible in the log.
+   * @returns a running operation with its settlement promise, or `nothing` when
+   * no safe useful range exists; a no-op writes no durable event.
+   * @throws {@link ManualCompactionError} synchronously for expected busy and
+   * already-cancelled requests. A failure of the started attempt rejects the
+   * returned `done`, and remains visible in the log.
    */
   abstract compactNow(
     agent: ManualCompactAgentContext,
     signal: AbortSignal,
     sourceCommandId?: CommandId,
-  ): Promise<CompactionResult | null>
+  ): ManualCompactionStart
 
   /**
    * Forcibly compact a range of surface nodes into a single summary node.

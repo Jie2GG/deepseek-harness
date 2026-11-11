@@ -746,11 +746,11 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         returns: 'the compaction result, or `null` if no compaction was needed.',
       },
       {
-        signature: 'abstract compactNow( agent: ManualCompactAgentContext, signal: AbortSignal, sourceCommandId?: CommandId, ): Promise<CompactionResult | null>',
-        description: 'Explicitly compact useful history even below automatic pressure thresholds. Implementations synchronously start an idle task before any asynchronous work, select a useful range without writing on a no-op, then append a standalone `compaction/start` before summarization. That durable marker is the compaction lock until one `compaction/end` attempt. Later waking prompts remain accepted in FIFO order and start only after the optional durability checkpoint and idle-task settlement. Context injected while the summary runs may sit between the marker pair; only the selected span must remain stable.',
-        parameters: [{ name: 'agent', description: 'idle agent whose durable history should be compacted.' }, { name: 'signal', description: 'cancellation scoped to this compaction request.' }, { name: 'sourceCommandId', description: 'initiating command identity for a manual compaction.' }],
-        returns: 'the compaction result, or `null` when no safe useful range exists.',
-        throws: ['{@link ManualCompactionError} for expected busy, agent-cancellation, changed-span, summarization/shrink, commit-stage, or persistence failures; an aborted request preserves its exact abort reason. Failed attempts remain visible in the log.'],
+        signature: 'abstract compactNow( agent: ManualCompactAgentContext, signal: AbortSignal, sourceCommandId?: CommandId, ): ManualCompactionStart',
+        description: 'Explicitly compact useful history even below automatic pressure thresholds. Implementations reserve the agent\'s idle maintenance task and select a useful range synchronously, so a human command can answer before the durable transaction settles, and then let the attempt run to its end unattached to that command\'s request. The durable `compaction/start` marker is the compaction lock until one `compaction/end` attempt. Later waking prompts remain accepted in FIFO order and start only after the optional durability checkpoint and idle-task settlement. Context injected while the summary runs may sit between the marker pair; only the selected span must remain stable.',
+        parameters: [{ name: 'agent', description: 'idle agent whose durable history should be compacted.' }, { name: 'signal', description: 'cancellation scoped to the compaction operation itself, not to whoever asked for it.' }, { name: 'sourceCommandId', description: 'initiating command identity for a manual compaction.' }],
+        returns: 'a running operation with its settlement promise, or `nothing` when no safe useful range exists; a no-op writes no durable event.',
+        throws: ['{@link ManualCompactionError} synchronously for expected busy and already-cancelled requests. A failure of the started attempt rejects the returned `done`, and remains visible in the log.'],
       },
       {
         signature: 'abstract compactRegion( start: SessionSeq, end: SessionSeq, agent: CompactionAgentContext, signal?: AbortSignal, ): Promise<CompactionResult>',
@@ -7224,6 +7224,10 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   {
     name: 'ManualCompactAgentContext',
     declaration: 'export interface ManualCompactAgentContext extends CompactionAgentContext {\n    runMaintenance<T>(task: (signal: AbortSignal) => Promise<T>): Promise<T>;\n}',
+  },
+  {
+    name: 'ManualCompactionStart',
+    declaration: 'export type ManualCompactionStart = {\n    readonly kind: \'running\';\n    readonly done: Promise<CompactionResult | null>;\n} | {\n    readonly kind: \'nothing\';\n};',
   },
   {
     name: 'MarketCompatibility',

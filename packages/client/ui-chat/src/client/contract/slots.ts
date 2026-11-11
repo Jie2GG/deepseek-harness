@@ -319,6 +319,10 @@ export type ChatNodeViewProps<Kind extends ChatNodeKind = ChatNodeKind> =
 export interface CommandRowOwnerProps {
   node: CommandNode
   compaction?: CompactionSummaryNode
+  /** Manual-compaction bracket state, read from its durable lifecycle events. */
+  attempt?: 'running' | 'failed'
+  /** Failure text recorded on the manual compaction's closing event. */
+  attemptError?: string
 }
 
 /** Full props of a registered command row. */

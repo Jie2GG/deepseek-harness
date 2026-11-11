@@ -2821,6 +2821,48 @@ describe('built-in conversation node Definitions', () => {
     expect(snapshot(compactions).nodes.values().filter(candidate => candidate.kind === 'compaction')).toHaveLength(1)
   })
 
+  it('reads a manual compaction still open after its command answered', () => {
+    const compactions = assembler([
+      at(10, 'command/run', { commandId: 'command-1', name: 'compact', source: { kind: 'user' } }),
+      at(11, 'compaction/start', { compactionId: 'manual-1', sourceCommandId: 'command-1', turn: null }),
+      at(12, 'command/done', { commandId: 'command-1', kind: 'success', text: 'Compaction started.' }),
+    ])
+
+    // The command settlement says nothing about the attempt: the row reads the
+    // open bracket, because the manual command answers at its reservation.
+    const manual = node(snapshot(compactions), 'manual-compaction')
+    expect(manual?.data).toMatchObject({ compaction: null, attempt: 'running' })
+  })
+
+  it('reads a failed manual compaction from its closing event', () => {
+    const compactions = assembler([
+      at(10, 'command/run', { commandId: 'command-1', name: 'compact', source: { kind: 'user' } }),
+      at(11, 'compaction/start', { compactionId: 'manual-1', sourceCommandId: 'command-1', turn: null }),
+      at(12, 'command/done', { commandId: 'command-1', kind: 'success', text: 'Compaction started.' }),
+      at(13, 'compaction/end', {
+        compactionId: 'manual-1',
+        sourceCommandId: 'command-1',
+        turn: null,
+        error: 'This operation was aborted',
+      }),
+    ])
+
+    const manual = node(snapshot(compactions), 'manual-compaction')
+    expect(manual?.data).toMatchObject({ attempt: 'failed', attemptError: 'This operation was aborted' })
+  })
+
+  it('reads a bracket that closed with nothing to compact as settled', () => {
+    const compactions = assembler([
+      at(10, 'command/run', { commandId: 'command-1', name: 'compact', source: { kind: 'user' } }),
+      at(11, 'compaction/start', { compactionId: 'manual-1', sourceCommandId: 'command-1', turn: null }),
+      at(12, 'command/done', { commandId: 'command-1', kind: 'success', text: 'Compaction started.' }),
+      at(13, 'compaction/end', { compactionId: 'manual-1', sourceCommandId: 'command-1', turn: null }),
+    ])
+
+    const manual = node(snapshot(compactions), 'manual-compaction')
+    expect((manual?.data as ManualCompactionChatData).attempt).toBeUndefined()
+  })
+
   it('fills a landed compaction marker when an older page supplies its summary', () => {
     const value = assembler([
       at(13, 'user/message', {

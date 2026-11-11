@@ -81,7 +81,7 @@ Automatic callers state why policy is running; implementations may treat confirm
 type CompactionTrigger = 'pressure' | 'context-overflow'
 ```
 
-`CompactionEngine` exposes `compactIfNeeded(agent, trigger, signal)` for automatic `pressure` or `context-overflow` policy, `compactNow(agent, signal)` for one useful idle-session reduction even below pressure, and `compactRegion(...)` for an explicit inclusive surface range. `compactNow()` runs as agent maintenance between turns, returns `null` without writing when no useful range exists, records a standalone `turn: null` bracket before summarization, and flushes a closed attempt before later queued prompts may derive from the new surface. Every backend creates its replacement `user/message` source with `compactCheckpointSource(compactionId, sourceCommandId?)`; client and wire consumers import that constructor, `CompactionCheckpointSource`, and `isCompactCheckpointSource()` from the cordis-free `@deepseek-ai/dsh-compaction/checkpoint` subpath, while the package root re-exports them for host consumers. The required transaction identity correlates the replacement checkpoint, while the predicate keeps recognition independent of any one backend. Implementations must forward the supplied signal to summarization. The seam owns no pricing API: the singleton [`ctx.tokenMeter`](token-meter.md) directly owns estimation and replay, while `dsh-compaction-basic` owns retention, event sequencing, routed summarization calls, and their configuration.
+`CompactionEngine` exposes `compactIfNeeded(agent, trigger, signal)` for automatic `pressure` or `context-overflow` policy, `compactNow(agent, signal)` for one useful idle-session reduction even below pressure, and `compactRegion(...)` for an explicit inclusive surface range. `compactNow()` decides its reservation synchronously and then runs as agent maintenance between turns: it answers `nothing` without writing when no useful range exists, and otherwise hands back a `running` operation whose `done` settles when the standalone `turn: null` bracket closes. The human `/compact` command answers at that reservation, so a Client that closes the page mid-summary cannot discard an attempt already paid for, and the conversation renders the attempt from the same bracket. A closed attempt is flushed before later queued prompts may derive from the new surface. Every backend creates its replacement `user/message` source with `compactCheckpointSource(compactionId, sourceCommandId?)`; client and wire consumers import that constructor, `CompactionCheckpointSource`, and `isCompactCheckpointSource()` from the cordis-free `@deepseek-ai/dsh-compaction/checkpoint` subpath, while the package root re-exports them for host consumers. The required transaction identity correlates the replacement checkpoint, while the predicate keeps recognition independent of any one backend. Implementations must forward the supplied signal to summarization. The seam owns no pricing API: the singleton [`ctx.tokenMeter`](token-meter.md) directly owns estimation and replay, while `dsh-compaction-basic` owns retention, event sequencing, routed summarization calls, and their configuration.
 
 Expected manual failures use `ManualCompactionErrorCode`:
 
@@ -163,25 +163,26 @@ abstract compactIfNeeded( agent: CompactionAgentContext, trigger: CompactionTrig
 
 /**
  * Explicitly compact useful history even below automatic pressure thresholds.
- * Implementations synchronously start an idle task before any asynchronous
- * work, select a useful range without writing on a no-op, then
- * append a standalone `compaction/start` before summarization. That durable
- * marker is the compaction lock until one `compaction/end` attempt. Later waking
- * prompts remain accepted in FIFO order and start only after the optional
- * durability checkpoint and idle-task settlement. Context injected while the
- * summary runs may sit between the marker pair; only the selected span must
- * remain stable.
+ * Implementations reserve the agent's idle maintenance task and select a
+ * useful range synchronously, so a human command can answer before the durable
+ * transaction settles, and then let the attempt run to its end unattached to
+ * that command's request. The durable `compaction/start` marker is the
+ * compaction lock until one `compaction/end` attempt. Later waking prompts
+ * remain accepted in FIFO order and start only after the optional durability
+ * checkpoint and idle-task settlement. Context injected while the summary runs
+ * may sit between the marker pair; only the selected span must remain stable.
  *
  * @param agent - idle agent whose durable history should be compacted.
- * @param signal - cancellation scoped to this compaction request.
+ * @param signal - cancellation scoped to the compaction operation itself, not
+ *   to whoever asked for it.
  * @param sourceCommandId - initiating command identity for a manual compaction.
- * @returns the compaction result, or `null` when no safe useful range exists.
- * @throws {@link ManualCompactionError} for expected busy, agent-cancellation,
- * changed-span, summarization/shrink, commit-stage, or persistence failures;
- * an aborted request preserves its exact abort reason. Failed attempts remain
- * visible in the log.
+ * @returns a running operation with its settlement promise, or `nothing` when
+ * no safe useful range exists; a no-op writes no durable event.
+ * @throws {@link ManualCompactionError} synchronously for expected busy and
+ * already-cancelled requests. A failure of the started attempt rejects the
+ * returned `done`, and remains visible in the log.
  */
-abstract compactNow( agent: ManualCompactAgentContext, signal: AbortSignal, sourceCommandId?: CommandId, ): Promise<CompactionResult | null>
+abstract compactNow( agent: ManualCompactAgentContext, signal: AbortSignal, sourceCommandId?: CommandId, ): ManualCompactionStart
 
 /**
  * Forcibly compact a range of surface nodes into a single summary node.

@@ -1,0 +1,22 @@
+# Bilingual-pair consistency record for 2026-11-11-manual-compaction-outlives-its-request.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write .agents/notes/implemented/feature/2026-11-11-manual-compaction-outlives-its-request.md
+/agent-note-manual-compaction-outlives-the-request-that-asked-for-it:
+  en: c6ef187cbbe190ca
+  zh: 1cbdbd88381ba1ea
+/agent-note-manual-compaction-outlives-the-request-that-asked-for-it/problem:
+  en: b3385bcfdfbe28cc
+  zh: 9a78c9935ffc4396
+/agent-note-manual-compaction-outlives-the-request-that-asked-for-it/decision:
+  en: 5d02290d72270ef1
+  zh: 43d91952e10addab
+/agent-note-manual-compaction-outlives-the-request-that-asked-for-it/alternatives-considered:
+  en: adaadb3c8ff45982
+  zh: 93ccc7eb2a8cbdad
+/agent-note-manual-compaction-outlives-the-request-that-asked-for-it/consequences:
+  en: 8fc6ffc2d06439d2
+  zh: 9774776986230742
+/agent-note-manual-compaction-outlives-the-request-that-asked-for-it/testing:
+  en: 3092cb755ca6b59d
+  zh: 7cb5e2df074b47a1

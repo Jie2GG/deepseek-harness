@@ -31,7 +31,7 @@ Type `/compact` in a chat UI when the conversation has grown long and you want t
 
 | Input | Result |
 |---|---|
-| `/compact` | Condense one useful balanced older span even below automatic pressure, then report the replaced history-item count and estimated tokens. |
+| `/compact` | Condense one useful balanced older span even below automatic pressure. The command answers once the attempt is reserved; the replaced history-item count and estimated tokens arrive when the checkpoint lands. |
 | `/compact` with no compactable history | `No compactable history yet.` — nothing changes. |
 | `/compact <anything>` | `Usage: /compact (no arguments)` — the command takes no arguments. |
 
@@ -47,7 +47,7 @@ The command turns each expected failure into a stable message you can show direc
 | Condensation did not finish cleanly | `Compaction did not finish cleanly; some session history may have changed. Inspect the current session state before retrying.` |
 | The conversation could not be saved | `Compaction finished, but the session could not be saved.` |
 
-Cancelling the command stops the wait: the backend finishes its required cleanup, and the command settles as `Compaction cancelled.` while the UI stops waiting. Failures other than these expected cases surface as errors rather than being silently converted.
+Closing the page or ending the request does not bound the attempt: the command has already answered, and the compaction runs until its bracket closes. Cancelling it goes through the agent's Stop, which records the cancellation on the session's `compaction/end` event and shows it on the conversation's compaction row. Failures other than these expected cases surface there the same way, and unexpected ones surface as errors rather than being silently converted.
 
 ### Composing the command
 
@@ -82,13 +82,13 @@ This section explains the design decisions behind the command; the observable be
 
 The command is built on three commitments:
 
-- **Backend-independent control.** The handler depends only on `compactNow(agent, signal)`, so it works with any `CompactionEngine` implementation. The invoking agent is the exact target, and the dispatching UI's cancellation signal is forwarded through the seam.
-- **The command lifecycle stays out of model history.** `command/run` and `command/done` are log-only events; `sourceEventSeq` correlates the successful result with the `compaction/summary` event without relying on text or row adjacency.
+- **Backend-independent control.** The handler depends only on `compactNow(agent, signal, sourceCommandId)` and its reservation answer, so it works with any `CompactionEngine` implementation. The invoking agent is the exact target, and the command passes its own controller through the seam: the dispatching request's cancellation never reaches the attempt.
+- **The command lifecycle stays out of model history.** `command/run` and `command/done` are log-only events; the attempt correlates with its command through `sourceCommandId` on every `compaction/*` event, without relying on text or row adjacency.
 - **Quiescent teardown.** The lifecycle effect unregisters `/compact` before draining already-started handlers, so an aborted command's close and flush work settles before root disposal completes.
 
 ### Lifecycle and correlation
 
-Every resolved invocation records the executor-owned log-only pair `command/run` / `command/done`; neither event joins model history. On success, `command/done.sourceEventSeq` names the transaction's `compaction/summary` event so a presentation can fold the command lifecycle into its checkpoint without parsing result text or assuming adjacent rows. The busy outcome is intentionally process-scoped: a live unmatched marker blocks, while a marker older than the newest `session/end-seed` is stale and does not. The plugin tracks each real handler promise and unregisters `/compact` before draining handlers that already started, so root teardown cannot pass an aborted command's close or flush boundary. Prompts submitted while compaction runs remain accepted in the agent's ordinary FIFO and start only after the compaction's explicit durability checkpoint and admission release; idle injected context may sit between `compaction/start` and `compaction/end` and stays visible after the checkpoint.
+Every resolved invocation records the executor-owned log-only pair `command/run` / `command/done`; neither event joins model history. The settlement names only the reservation, so a presentation folds the command lifecycle into its checkpoint from the `compaction/start` … `compaction/end` bracket that carries the same `sourceCommandId`, without parsing result text or assuming adjacent rows. The busy outcome is intentionally process-scoped: a live unmatched marker blocks, while a marker older than the newest `session/end-seed` is stale and does not. The plugin tracks each real handler promise and unregisters `/compact` before draining handlers that already started, so root teardown cannot pass an aborted command's close or flush boundary. Prompts submitted while compaction runs remain accepted in the agent's ordinary FIFO and start only after the compaction's explicit durability checkpoint and admission release; idle injected context may sit between `compaction/start` and `compaction/end` and stays visible after the checkpoint.
 
 ### Source map
 

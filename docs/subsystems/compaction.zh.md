@@ -81,7 +81,7 @@ interface CompactionResult {
 type CompactionTrigger = 'pressure' | 'context-overflow'
 ```
 
-`CompactionEngine` 暴露 `compactIfNeeded(agent, trigger, signal)` 以执行自动 `pressure` 或 `context-overflow` 策略，暴露 `compactNow(agent, signal)` 以便即使未达到压力也对空闲会话进行一次有效缩减，还针对显式、两端均包含的 surface 范围暴露 `compactRegion(...)`。`compactNow()` 作为轮次之间的 agent maintenance 运行；没有有效范围时返回 `null` 且不写入；在摘要前记录独立的 `turn: null` 标记对，并在后续排队提示词能够从新表层派生前 flush 已闭合尝试。每个后端都使用 `compactCheckpointSource(compactionId, sourceCommandId?)` 创建替换用 `user/message` 的源；client 与 wire 消费方从无 Cordis 的 `@deepseek-ai/dsh-compaction/checkpoint` 子路径导入该构造函数、`CompactionCheckpointSource` 和 `isCompactCheckpointSource()`，包根则为 host 消费方重新导出它们。必填的事务身份会关联替换检查点，而该判定函数使检查点识别不依赖任一特定后端。实现必须把传入的 signal 转发给摘要流程。该 seam 不拥有计价 API：单例 [`ctx.tokenMeter`](token-meter.zh.md) 直接拥有估算与回放，而 `dsh-compaction-basic` 拥有保留策略、事件排序、按路由执行的摘要调用及其配置。
+`CompactionEngine` 暴露 `compactIfNeeded(agent, trigger, signal)` 以执行自动 `pressure` 或 `context-overflow` 策略，暴露 `compactNow(agent, signal)` 以便即使未达到压力也对空闲会话进行一次有效缩减，还针对显式、两端均包含的 surface 范围暴露 `compactRegion(...)`。`compactNow()` 同步决定自己的预约，之后作为轮次之间的 agent maintenance 运行：没有有效范围时返回 `nothing` 且不写入；否则交回一个 `running` 操作，其 `done` 在独立的 `turn: null` 标记对闭合时落定。人工 `/compact` 命令在这次预约处就返回，因此摘要仍在运行时关闭页面的 Client 无法丢弃一次已经付出成本的尝试，对话界面也从同一标记对呈现这次尝试。已闭合的尝试会在后续排队提示能够从新表层派生之前被 flush。每个后端都使用 `compactCheckpointSource(compactionId, sourceCommandId?)` 创建替换用 `user/message` 的源；client 与 wire 消费方从无 Cordis 的 `@deepseek-ai/dsh-compaction/checkpoint` 子路径导入该构造函数、`CompactionCheckpointSource` 和 `isCompactCheckpointSource()`，包根则为 host 消费方重新导出它们。必填的事务身份会关联替换检查点，而该判定函数使检查点识别不依赖任一特定后端。实现必须把传入的 signal 转发给摘要流程。该 seam 不拥有计价 API：单例 [`ctx.tokenMeter`](token-meter.zh.md) 直接拥有估算与回放，而 `dsh-compaction-basic` 拥有保留策略、事件排序、按路由执行的摘要调用及其配置。
 
 预期的手动失败使用 `ManualCompactionErrorCode`：
 
@@ -163,25 +163,26 @@ abstract compactIfNeeded( agent: CompactionAgentContext, trigger: CompactionTrig
 
 /**
  * Explicitly compact useful history even below automatic pressure thresholds.
- * Implementations synchronously start an idle task before any asynchronous
- * work, select a useful range without writing on a no-op, then
- * append a standalone `compaction/start` before summarization. That durable
- * marker is the compaction lock until one `compaction/end` attempt. Later waking
- * prompts remain accepted in FIFO order and start only after the optional
- * durability checkpoint and idle-task settlement. Context injected while the
- * summary runs may sit between the marker pair; only the selected span must
- * remain stable.
+ * Implementations reserve the agent's idle maintenance task and select a
+ * useful range synchronously, so a human command can answer before the durable
+ * transaction settles, and then let the attempt run to its end unattached to
+ * that command's request. The durable `compaction/start` marker is the
+ * compaction lock until one `compaction/end` attempt. Later waking prompts
+ * remain accepted in FIFO order and start only after the optional durability
+ * checkpoint and idle-task settlement. Context injected while the summary runs
+ * may sit between the marker pair; only the selected span must remain stable.
  *
  * @param agent - idle agent whose durable history should be compacted.
- * @param signal - cancellation scoped to this compaction request.
+ * @param signal - cancellation scoped to the compaction operation itself, not
+ *   to whoever asked for it.
  * @param sourceCommandId - initiating command identity for a manual compaction.
- * @returns the compaction result, or `null` when no safe useful range exists.
- * @throws {@link ManualCompactionError} for expected busy, agent-cancellation,
- * changed-span, summarization/shrink, commit-stage, or persistence failures;
- * an aborted request preserves its exact abort reason. Failed attempts remain
- * visible in the log.
+ * @returns a running operation with its settlement promise, or `nothing` when
+ * no safe useful range exists; a no-op writes no durable event.
+ * @throws {@link ManualCompactionError} synchronously for expected busy and
+ * already-cancelled requests. A failure of the started attempt rejects the
+ * returned `done`, and remains visible in the log.
  */
-abstract compactNow( agent: ManualCompactAgentContext, signal: AbortSignal, sourceCommandId?: CommandId, ): Promise<CompactionResult | null>
+abstract compactNow( agent: ManualCompactAgentContext, signal: AbortSignal, sourceCommandId?: CommandId, ): ManualCompactionStart
 
 /**
  * Forcibly compact a range of surface nodes into a single summary node.

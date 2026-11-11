@@ -70,6 +70,16 @@ export interface ToolChatData {
 export interface ManualCompactionChatData {
   readonly command: CommandNode
   readonly compaction: CompactionSummaryNode | null
+  /**
+   * State of the compaction bracket this command opened, read from its own
+   * `compaction/start` … `compaction/end` events: `running` while the summary
+   * request is still out after the command answered, and `failed` once the
+   * bracket closed on a recorded error. Absent when the checkpoint has landed or
+   * no manual transaction is attached.
+   */
+  readonly attempt?: 'running' | 'failed'
+  /** Failure text the closing `compaction/end` event recorded. */
+  readonly attemptError?: string
 }
 
 /** One durable retry chain rendered as a single row. */
