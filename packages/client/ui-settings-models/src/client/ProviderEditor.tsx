@@ -8,15 +8,19 @@
  * provider-native authentication);
  * the collapsed 自定义设置 area carries the per-family extras (`baseURL` for
  * both families, DeepSeek's id/name/context-window model catalog, and the
- * display name and wire protocol of a pi-ai route the adapter does not ship —
- * the two fields the create card asked that route for, editable here for the
- * same reason).
+ * display name, wire protocol, and timeout of a pi-ai route the adapter does
+ * not ship — the fields the create card asked that route for, editable here for
+ * the same reason).
  * Reasoning effort is deliberately absent: it is a per-MODEL capability, and
  * the models under one provider disagree about it, so a provider-scoped
  * control can only be set to a value some of them reject. The composer's
  * model picker offers each model its own levels; `cordis.patch.yml` keeps the
- * profile field for a deployment that knows its route. Everything else stays
- * owned by `cordis.patch.yml`. Profile edits land as minimal `settings.mutate`
+ * profile field for a deployment that knows its route. Retry policy and the
+ * rest stay owned by `cordis.patch.yml`, except the timeout a hand-declared
+ * route edits here: a gateway whose first token arrives later than the profile
+ * defaults is cut off by both `streamIdleTimeoutMs` and `timeoutMs`, so the one
+ * field in seconds writes that pair with the same value. Profile edits land as
+ * minimal `settings.mutate`
  * path ops against the stored section — the card names only the fields it can
  * see instead of rebuilding the whole subtree from a partial descriptor.
  */
@@ -35,6 +39,7 @@ import { EditorFooter } from './EditorFooter.tsx'
 import { ModelListEditor } from './ModelListEditor.tsx'
 import { validateReasoningEfforts } from './ModelReasoningEfforts.tsx'
 import type { ReasoningEffortsFailure } from './ModelReasoningEfforts.tsx'
+import { formatMsToSeconds, parseSecondsToMs } from './timeout-value.ts'
 import { deriveKeyRef, protocolChoices, reasoningLevelChoices } from './store.ts'
 import { protocolLabel } from './protocol-label.ts'
 import type { ModelsOperations } from './operations.ts'
@@ -45,6 +50,13 @@ import styles from './ModelsSection.module.css'
 
 /** Per-adapter-family curated field sets (unknown namespaces get the hint alone). */
 type EditorLayout = 'deepseek' | 'pi-ai' | 'unknown'
+
+/**
+ * The two millisecond profile keys one timeout field writes. Clearing the field
+ * unsets both, so a profile that held only one of them returns to what the
+ * composition entry or the schema default supplies.
+ */
+const TIMEOUT_KEYS: readonly string[] = ['streamIdleTimeoutMs', 'timeoutMs']
 
 
 
@@ -150,6 +162,11 @@ export function pathOps(
   return ops
 }
 
+/** Narrow one unread schema or profile value to a usable millisecond count. */
+function numberValue(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isFinite(value) ? value : undefined
+}
+
 /** The editor layout the owning namespace selects. */
 function layoutOf(ns: string): EditorLayout {
   if (ns === 'llm-deepseek') return 'deepseek'
@@ -180,6 +197,9 @@ export function ProviderEditor(props: ProviderEditorProps): ReactNode {
   const { namespace, schema, settingsPath, operations, t } = props
   const [draft, setDraft] = useState<Record<string, unknown>>(() => draftAt(schema, namespace, settingsPath))
   const [keyDraft, setKeyDraft] = useState('')
+  // Absent until the field is touched, so an untouched profile keeps whatever
+  // pair it held and the diff below writes nothing for it.
+  const [timeoutDraft, setTimeoutDraft] = useState<string | undefined>(undefined)
   const [busy, setBusy] = useState(false)
   const [listBusy, setListBusy] = useState(false)
   const { onBusyChange } = props
@@ -210,6 +230,24 @@ export function ProviderEditor(props: ProviderEditorProps): ReactNode {
   const stringAt = (source: unknown, key: string): string | undefined => {
     const value = schema.getPath(source, [key])
     return typeof value === 'string' && value.trim().length > 0 ? value : undefined
+  }
+  const numberAt = (source: unknown, key: string): number | undefined => numberValue(schema.getPath(source, [key]))
+  const storedTimeoutMs = numberAt(draft, 'streamIdleTimeoutMs') ?? numberAt(draft, 'timeoutMs')
+  const timeoutInvalid = timeoutDraft !== undefined && Number.isNaN(parseSecondsToMs(timeoutDraft))
+  /** Rewrite both timeout keys from one field, or clear both when it is blank. */
+  const setTimeoutFields = (text: string): void => {
+    setTimeoutDraft(text)
+    const ms = parseSecondsToMs(text)
+    // Unreadable text stays on screen with the draft unchanged: the submit gate
+    // refuses it, so a save cannot carry a value this field cannot mean.
+    if (Number.isNaN(ms)) return
+    setDraft((current) => {
+      let next = current
+      for (const key of TIMEOUT_KEYS) {
+        next = ms === undefined ? schema.deletePath(next, [key]) : schema.setPath(next, [key], ms)
+      }
+      return next
+    })
   }
   const setField = (key: string, next: string | undefined): void => {
     // A value of nothing but whitespace is cleared, not stored: `stringAt`
@@ -363,6 +401,15 @@ export function ProviderEditor(props: ProviderEditorProps): ReactNode {
     const defaultMaxTokens = schema.getPath(fallback, ['maxTokens'])
     const defaultInput = schema.getPath(fallback, ['defaultInput'])
     const baseURL = stringAt(fallback, 'baseURL') ?? props.defaultBaseURL
+    // What clearing the timeout field restores: the layer beneath the one this
+    // field edits, which is the stored composition entry, else the default the
+    // adapter's own schema would resolve.
+    const inheritedTimeoutMs = numberAt(schema.getPath(namespace.base, settingsPath), 'streamIdleTimeoutMs')
+      ?? numberAt(schema.getPath(namespace.base, settingsPath), 'timeoutMs')
+      ?? numberValue(schema.nodeAtPath(root, [...settingsPath, 'streamIdleTimeoutMs'])?.meta.default)
+    const timeoutPlaceholder = inheritedTimeoutMs === undefined
+      ? t('customTimeoutPlaceholder')
+      : formatMsToSeconds(inheritedTimeoutMs)
     const endpointEnv = props.baseURLEnv ?? []
     const endpointHint = family === 'deepseek' ? t('deepSeekEndpointHint')
       : baseURL === undefined && endpointEnv.length > 0 ? t('baseUrlEnvironment').replace('{env}', () => endpointEnv.join(', ')) : undefined
@@ -486,6 +533,30 @@ export function ProviderEditor(props: ProviderEditorProps): ReactNode {
               />
               {endpointHint === undefined ? null : <span id={`${props.provider}-endpoint-hint`} className={styles['advancedHint']}>{endpointHint}</span>}
             </div>
+            {/* The timeout sits with the endpoint it waits on, as it does on the
+                create card, and a declared route owns both keys the way it owns
+                its name and protocol. */}
+            {ownsIdentity
+              ? (
+                <div className={styles['field']}>
+                  <span className={styles['fieldLabel']}>{t('customTimeout')}</span>
+                  <input
+                    className={styles['input']}
+                    type="text"
+                    inputMode="decimal"
+                    value={timeoutDraft ?? (storedTimeoutMs === undefined ? '' : formatMsToSeconds(storedTimeoutMs))}
+                    placeholder={timeoutPlaceholder}
+                    aria-label={t('customTimeout')}
+                    aria-describedby={`${props.provider}-timeout-hint`}
+                    aria-invalid={timeoutInvalid}
+                    disabled={disabled}
+                    onChange={(event) => { setTimeoutFields(event.target.value) }}
+                  />
+                  <span id={`${props.provider}-timeout-hint`} className={styles['advancedHint']}>{t('customTimeoutHint')}</span>
+                  {timeoutInvalid ? <p className={styles['error']}>{t('customTimeoutInvalid')}</p> : null}
+                </div>
+              )
+              : null}
             {/* The protocol sits beside the endpoint it describes, as it does
                 on the create card. */}
             {ownsIdentity
@@ -570,7 +641,7 @@ export function ProviderEditor(props: ProviderEditorProps): ReactNode {
         busy={busy}
         submitDisabled={disabled || layout === 'unknown'
           || (props.credentialOnly !== true && modelFailure !== undefined)
-          || shownKeyFailure !== undefined
+          || shownKeyFailure !== undefined || timeoutInvalid
           || (props.credentialRequired === true && keyValue.length === 0)}
         submitLabelKey={props.submitLabelKey ?? 'apply'}
         submitBusyLabelKey={props.submitBusyLabelKey ?? 'applying'}

@@ -15,6 +15,7 @@ import {
   type CompactionResult,
   type CompactionTrigger,
   type ManualCompactAgentContext,
+  type ManualCompactionStart,
 } from '@deepseek-ai/dsh-compaction'
 import * as commandCompact from '@deepseek-ai/dsh-command-compact'
 import { Session, SessionId, SessionSeq } from '@deepseek-ai/dsh-session'
@@ -49,7 +50,7 @@ class LoaderCompactionEngine extends CompactionEngine {
     agent: ManualCompactAgentContext,
     _signal: AbortSignal,
     sourceCommandId?: Parameters<CompactionEngine['compactNow']>[2],
-  ): Promise<CompactionResult | null> {
+  ): ManualCompactionStart {
     const operationIds = {
       compactionId: RESULT.compactionId,
       ...sourceCommandId === undefined ? {} : { sourceCommandId },
@@ -65,7 +66,7 @@ class LoaderCompactionEngine extends CompactionEngine {
       model: 'loader-test',
     })
     agent.session.append('compaction/end', { ...operationIds, turn: null })
-    return Promise.resolve({ ...RESULT, ...operationIds })
+    return { kind: 'running', done: Promise.resolve({ ...RESULT, ...operationIds }) }
   }
 }
 
@@ -126,11 +127,7 @@ describe('command-compact real Loader composition', () => {
     })
     const execution = await context.commands.execute(agent, '/compact', [], new AbortController().signal)
     if (execution === undefined) throw new Error('Loader composition did not resolve /compact')
-    expect(execution.result).toEqual({
-      kind: 'success',
-      text: 'Compacted 3 history items (~99 tokens).',
-      sourceEventSeq: RESULT.summarySeq,
-    })
+    expect(execution.result).toEqual({ kind: 'success', text: 'Compaction started. It keeps running even if you close this page; the result appears in this conversation. Press Stop to cancel it.' })
     expect(session.snapshotEvents().map(event => ({ type: event.type, data: event.data }))).toEqual([
       {
         type: 'command/run',
@@ -175,8 +172,7 @@ describe('command-compact real Loader composition', () => {
         data: {
           commandId: execution.commandId,
           kind: 'success',
-          text: 'Compacted 3 history items (~99 tokens).',
-          sourceEventSeq: RESULT.summarySeq,
+          text: 'Compaction started. It keeps running even if you close this page; the result appears in this conversation. Press Stop to cancel it.',
         },
       },
     ])

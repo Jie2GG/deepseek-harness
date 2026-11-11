@@ -31,7 +31,7 @@ kind: "package-reference"
 
 | 输入 | 结果 |
 |---|---|
-| `/compact` | 即使未达到自动压力，也压缩一段有效、平衡的较早范围，然后报告被替换的历史项数量与估算 token 数。 |
+| `/compact` | 即使未达到自动压力，也压缩一段有效、平衡的较早范围。命令在尝试完成预约时就返回；被替换的历史项数量与估算 token 数随检查点落地出现。 |
 | `/compact`，但没有可压缩历史 | `No compactable history yet.`——不会有任何改变。 |
 | `/compact <anything>` | `Usage: /compact (no arguments)`——该命令不接受参数。 |
 
@@ -47,7 +47,7 @@ kind: "package-reference"
 | 压缩未干净地完成 | `Compaction did not finish cleanly; some session history may have changed. Inspect the current session state before retrying.` |
 | 会话无法保存 | `Compaction finished, but the session could not be saved.` |
 
-取消命令会停止等待：后端完成必需的清理，命令以 `Compaction cancelled.` 结算，UI 停止等待。除这些预期情形外的失败会以错误形式呈现，而不会被静默转换。
+关闭页面或结束这次请求都不会约束这次尝试：命令已经返回，压缩会一直运行到它的标记对闭合。要取消它就走 agent 的停止操作，取消会记在会话的 `compaction/end` 事件上，并显示在对话里的压缩行上。除这些预期情形外的失败同样以这种方式呈现，而意外失败会以错误形式呈现，不会被静默转换。
 
 ### 组合命令
 
@@ -82,13 +82,13 @@ kind: "package-reference"
 
 该命令建立在三项承诺之上：
 
-- **与后端无关的控制。** 处理器只依赖 `compactNow(agent, signal)`，因此可与任何 `CompactionEngine` 实现协作。调用该命令的 agent 就是操作的确切目标，发起分发的 UI 会通过 seam 转发取消信号。
-- **命令生命周期不进入模型历史。** `command/run` 与 `command/done` 都是仅日志事件；`sourceEventSeq` 将成功结果与 `compaction/summary` 事件关联，不依赖文本或行相邻关系。
+- **与后端无关的控制。** 处理器只依赖 `compactNow(agent, signal, sourceCommandId)` 及其预约结果，因此可与任何 `CompactionEngine` 实现协作。调用该命令的 agent 就是操作的确切目标，而命令经由 seam 传的是自己的控制器：分发那次请求的取消永远不会触及这次尝试。
+- **命令生命周期不进入模型历史。** `command/run` 与 `command/done` 都是仅日志事件；这次尝试靠每个 `compaction/*` 事件上的 `sourceCommandId` 与它的命令关联，不依赖文本或行相邻关系。
 - **资源销毁必须完全停稳。** 生命周期 effect 会先注销 `/compact`，再等待已开始处理器结算，因此已中止命令的闭合与 flush 工作会在根级资源释放完成前结算完毕。
 
 ### 生命周期与关联
 
-每次完成的调用都会记录执行器所属的仅日志事件对 `command/run` / `command/done`；两者都不进入模型历史。成功时，`command/done.sourceEventSeq` 会指明该事务的 `compaction/summary` 事件，让呈现层无须解析结果文本或假定两行相邻，即可将命令生命周期归并到对应检查点中。busy 结果有意限定在进程范围内：活动的未匹配标记会阻塞，而早于最新 `session/end-seed` 的标记已陈旧，不会阻塞。插件会跟踪每个真实处理器 promise，并在排空已开始处理器之前注销 `/compact`，因此根级 teardown 不会越过已中止命令的闭合或 flush 边界。压缩运行期间提交的提示词仍会按 agent 的普通 FIFO 获得接纳，并且只在压缩的显式持久性检查点和接纳预留释放后启动；空闲注入的上下文可以位于 `compaction/start` 与 `compaction/end` 之间，并在检查点之后保持可见。
+每次完成的调用都会记录执行器所属的仅日志事件对 `command/run` / `command/done`；两者都不进入模型历史。这条结算只说明预约结果，因此呈现层用携带同一个 `sourceCommandId` 的 `compaction/start` … `compaction/end` 标记对，将命令生命周期归并到对应检查点，而无须解析结果文本或假定两行相邻。busy 结果有意限定在进程范围内：活动的未匹配标记会阻塞，而早于最新 `session/end-seed` 的标记已陈旧，不会阻塞。插件会跟踪每个真实处理器 promise，并在排空已开始处理器之前注销 `/compact`，因此根级 teardown 不会越过已中止命令的闭合或 flush 边界。压缩运行期间提交的提示词仍会按 agent 的普通 FIFO 获得接纳，并且只在压缩的显式持久性检查点和接纳预留释放后启动；空闲注入的上下文可以位于 `compaction/start` 与 `compaction/end` 之间，并在检查点之后保持可见。
 
 ### 源码地图
 

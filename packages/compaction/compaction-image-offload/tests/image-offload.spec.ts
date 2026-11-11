@@ -21,7 +21,20 @@ import * as offload from '../src/index.ts'
 
 type ScriptEntry = StreamChunk[] | (() => never)
 
+
+/** Await one manual compaction the way a caller that wants its result does. */
+async function runNow(
+  engine: BasicCompactionEngine,
+  agent: Parameters<BasicCompactionEngine['compactNow']>[0],
+  signal: AbortSignal,
+) {
+  const started = engine.compactNow(agent, signal)
+  return started.kind === 'nothing' ? null : started.done
+}
+
 /** Replies one scripted stream per request and declares no retry policy. */
+
+
 class ScriptedAdapter extends LlmAdapter {
   readonly requests: GenerateOptions[] = []
   serializeSummary = false
@@ -137,7 +150,7 @@ describe('summary image offload', () => {
     const { compact, agent, adapter } = await summaryHarness([textResponse('answer'), textResponse('checkpoint')])
     const span = await seedImages(agent, ['first', 'second'])
     adapter.serializeSummary = true
-    const result = await compact.compactNow(agent, new AbortController().signal)
+    const result = await runNow(compact, agent, new AbortController().signal)
     expect(result).not.toBeNull()
     expect(adapter.requests.map(offloadedNames)).toEqual([[], [], ['first', 'second']])
     expect(adapter.requests.slice(1).map(request => request.model)).toEqual(['summary', 'summary'])
@@ -178,7 +191,7 @@ describe('summary image offload', () => {
       textResponse('answer'), offloadRequired(1), () => { throw new LlmError('provider outage', 'SERVER') },
     ])
     await seedImages(agent, ['first'])
-    await expect(compact.compactNow(agent, new AbortController().signal)).rejects.toMatchObject({ code: 'summary', cause: { code: 'SERVER' } })
+    await expect(runNow(compact, agent, new AbortController().signal)).rejects.toMatchObject({ code: 'summary', cause: { code: 'SERVER' } })
     expect(adapter.requests).toHaveLength(3)
     expect(decisions(agent.session)).toHaveLength(1)
     expect(agent.session.surface.replaceGeneration).toBe(0)
@@ -191,7 +204,7 @@ describe('summary image offload', () => {
       textResponse('answer'), () => { controller.abort(reason); return offloadRequired(1)() },
     ])
     await seedImages(agent, ['first'])
-    await expect(compact.compactNow(agent, controller.signal)).rejects.toBe(reason)
+    await expect(runNow(compact, agent, controller.signal)).rejects.toBe(reason)
     expect(adapter.requests).toHaveLength(2)
     expect(decisions(agent.session)).toEqual([])
   })
@@ -202,7 +215,7 @@ describe('summary image offload', () => {
     const controller = new AbortController()
     const reason = new Error('cancel after offload')
     ctx.on('session/event', (_session, event) => { if (event.type === 'image/offload') controller.abort(reason) })
-    await expect(compact.compactNow(agent, controller.signal)).rejects.toBe(reason)
+    await expect(runNow(compact, agent, controller.signal)).rejects.toBe(reason)
     expect(adapter.requests).toHaveLength(2)
     expect(decisions(agent.session)).toHaveLength(1)
   })
@@ -217,7 +230,7 @@ describe('summary image offload', () => {
       })
       return offloadRequired(1)()
     })
-    await expect(compact.compactNow(agent, new AbortController().signal)).rejects.toMatchObject({ code: 'changed' })
+    await expect(runNow(compact, agent, new AbortController().signal)).rejects.toMatchObject({ code: 'changed' })
     expect(decisions(agent.session)).toEqual([])
   })
 })

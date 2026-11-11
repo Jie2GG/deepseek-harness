@@ -238,6 +238,28 @@ function compactEvents(session: Session): SessionEvent[] {
   return session.snapshotEvents().filter(event => event.type.startsWith('compaction/'))
 }
 
+/** Await one manual compaction the way a caller that wants its result does. */
+async function runNow(
+  engine: BasicCompactionEngine,
+  agent: Parameters<BasicCompactionEngine['compactNow']>[0],
+  signal: AbortSignal = SIGNAL,
+  sourceCommandId?: Parameters<BasicCompactionEngine['compactNow']>[2],
+): Promise<CompactionResult | null> {
+  const started = engine.compactNow(agent, signal, sourceCommandId)
+  return started.kind === 'nothing' ? null : started.done
+}
+
+/** Reserve a manual compaction and hand back the operation still in flight. */
+function startNow(
+  engine: BasicCompactionEngine,
+  agent: Parameters<BasicCompactionEngine['compactNow']>[0],
+  signal: AbortSignal = SIGNAL,
+): Promise<CompactionResult | null> {
+  const started = engine.compactNow(agent, signal)
+  if (started.kind !== 'running') throw new Error('expected the request to reserve a running operation')
+  return started.done
+}
+
 describe('compactNow through the real loop', () => {
   it('passes logged image omissions to the summarizer without changing the original message', async () => {
     const { ctx, agent, compact } = await loopHarness()
@@ -252,7 +274,7 @@ describe('compactNow through the real loop', () => {
       await agent.whenIdle()
       const source = agent.session.snapshotEvents().find(event => event.type === 'user/message')!
       agent.session.append('image/offload', { targets: [{ seq: source.seq, imageIndexes: [0] }] })
-      expect(await compact.compactNow(agent, SIGNAL)).not.toBeNull()
+      expect(await runNow(compact, agent, SIGNAL)).not.toBeNull()
       const image = compact.calls[0]?.messages.flatMap(message => message.content).find(block => block.type === 'image')
       expect(image).toMatchObject({ offloaded: true })
       expect(JSON.stringify(source)).not.toContain('offloaded')
@@ -268,9 +290,13 @@ describe('compactNow through the real loop', () => {
     const gate = deferred()
     compact.gate = gate.promise
 
-    const running = compact.compactNow(agent, SIGNAL)
+    const running = startNow(compact, agent, SIGNAL)
     await Promise.resolve()
     expect(log).toEqual(['compaction/start:null'])
+    // The reserved operation is still open at this point, which is what lets the
+    // human command answer without keeping the request that asked for it alive.
+    let operationSettled = false
+    void running.then(() => { operationSettled = true })
     agent.followup(createUserMessage({
       content: [{ type: 'text', text: 'after compaction' }],
       source: { kind: 'user' },
@@ -281,6 +307,7 @@ describe('compactNow through the real loop', () => {
     expect(adapter.requests).toHaveLength(1)
     expect(log).toEqual(['compaction/start:null'])
 
+    expect(operationSettled).toBe(false)
     gate.resolve()
     const result = await running
     expect(result).not.toBeNull()
@@ -316,7 +343,7 @@ describe('compactNow through the real loop', () => {
       }))
     }
 
-    const result = await compact.compactNow(agent, SIGNAL)
+    const result = await runNow(compact, agent, SIGNAL)
 
     expect(result).not.toBeNull()
     const start = agent.session.snapshotEvents().findLast(event => event.type === 'compaction/start')
@@ -354,7 +381,7 @@ describe('compactNow through the real loop', () => {
       }))
     })
 
-    const result = await compact.compactNow(agent, SIGNAL)
+    const result = await runNow(compact, agent, SIGNAL)
 
     expect(attempts).toEqual(['compaction/start', 'compaction/summary'])
     expect(result).not.toBeNull()
@@ -375,7 +402,7 @@ describe('compactNow through the real loop', () => {
       content: [{ type: 'text', text: 'first in line' }],
       source: { kind: 'user' },
     }))
-    expect((await rejection(() => compact.compactNow(agent, SIGNAL))).code).toBe('busy')
+    expect((await rejection(async () => await runNow(compact, agent, SIGNAL))).code).toBe('busy')
     expect(compact.calls).toHaveLength(0)
 
     await agent.whenIdle()
@@ -390,7 +417,7 @@ describe('compactNow through the real loop', () => {
     compact.error = new Error('summarizer unavailable')
     const before = [...agent.session.surface.nodes]
 
-    expect((await rejection(compact.compactNow(agent, SIGNAL))).code).toBe('summary')
+    expect((await rejection(async () => await runNow(compact, agent, SIGNAL))).code).toBe('summary')
     expect(agent.session.surface.nodes).toEqual(before)
     const markers = compactEvents(agent.session)
     expect(markers.map(event => event.type)).toEqual(['compaction/start', 'compaction/end'])
@@ -407,13 +434,15 @@ describe('compactNow through the real loop', () => {
 })
 
 describe('compactNow transaction and failure classification', () => {
-  it('returns null without writing a bracket for history that cannot be compacted', async () => {
+  it('reports nothing without writing a bracket for history that cannot be compacted', async () => {
     const { compact } = detachedService()
     const session = Session.create(SessionId('empty'))
     let released = 0
     const agent = fakeAgent(session, () => () => { released += 1 })
 
-    expect(await compact.compactNow(agent, SIGNAL)).toBeNull()
+    // The reservation answer is synchronous; only the idle-task settlement trails it.
+    expect(compact.compactNow(agent, SIGNAL).kind).toBe('nothing')
+    await new Promise((resolve) => { setTimeout(resolve, 0) })
     expect(released).toBe(1)
     expect(compact.calls).toHaveLength(0)
     expect(compactEvents(session)).toEqual([])
@@ -425,7 +454,7 @@ describe('compactNow transaction and failure classification', () => {
     const agent = fakeAgent(session, () => () => undefined)
     const commandId = CommandId('manual-compact-command')
 
-    const result = await compact.compactNow(agent, SIGNAL, commandId)
+    const result = await runNow(compact, agent, SIGNAL, commandId)
 
     expect(result).not.toBeNull()
     expect(result?.sourceCommandId).toBe(commandId)
@@ -454,7 +483,7 @@ describe('compactNow transaction and failure classification', () => {
     })
     const agent = fakeAgent(session, () => () => undefined)
 
-    const error = await rejection(() => compact.compactNow(agent, SIGNAL))
+    const error = await rejection(async () => await runNow(compact, agent, SIGNAL))
     expect(error.code).toBe('busy')
     expect(error.message).toContain('compaction lock is already active')
     expect(compact.calls).toHaveLength(0)
@@ -473,7 +502,7 @@ describe('compactNow transaction and failure classification', () => {
     const agent = fakeAgent(reloaded, () => () => undefined)
 
     expect(boundary?.seq).toBeGreaterThan(orphan?.seq ?? Number.MAX_SAFE_INTEGER)
-    await expect(compact.compactNow(agent, SIGNAL)).resolves.not.toBeNull()
+    await expect(runNow(compact, agent, SIGNAL)).resolves.not.toBeNull()
     expect(compact.calls).toHaveLength(1)
   })
 
@@ -495,7 +524,7 @@ describe('compactNow transaction and failure classification', () => {
     const child = Session.create(SessionId('forked-orphan'), seed)
     const agent = fakeAgent(child, () => () => undefined)
 
-    await expect(compact.compactNow(agent, SIGNAL)).resolves.not.toBeNull()
+    await expect(runNow(compact, agent, SIGNAL)).resolves.not.toBeNull()
     expect(compact.calls).toHaveLength(1)
   })
 
@@ -511,7 +540,7 @@ describe('compactNow transaction and failure classification', () => {
     const reloaded = Session.create(SessionId('reloaded-orphan'), original.snapshotEvents())
     const agent = fakeAgent(reloaded, () => () => undefined)
 
-    await expect(compact.compactNow(agent, SIGNAL)).resolves.not.toBeNull()
+    await expect(runNow(compact, agent, SIGNAL)).resolves.not.toBeNull()
     expect(compact.calls).toHaveLength(1)
   })
 
@@ -521,7 +550,7 @@ describe('compactNow transaction and failure classification', () => {
     session.append('turn/start', { turn: 3 })
     const agent = fakeAgent(session, () => () => undefined)
 
-    const error = await rejection(compact.compactNow(agent, SIGNAL))
+    const error = await rejection(async () => await runNow(compact, agent, SIGNAL))
     expect(error.code).toBe('busy')
     expect(error.message).toContain('already has an open turn')
   })
@@ -530,7 +559,7 @@ describe('compactNow transaction and failure classification', () => {
     const { compact } = detachedService()
     const agent = fakeAgent(closedConversation(2), () => undefined)
 
-    expect((await rejection(() => compact.compactNow(agent, SIGNAL))).code).toBe('busy')
+    expect((await rejection(async () => await runNow(compact, agent, SIGNAL))).code).toBe('busy')
     expect(compact.calls).toHaveLength(0)
   })
 
@@ -550,7 +579,7 @@ describe('compactNow transaction and failure classification', () => {
       })
     }
 
-    expect((await rejection(compact.compactNow(agent, SIGNAL))).code).toBe('changed')
+    expect((await rejection(async () => await runNow(compact, agent, SIGNAL))).code).toBe('changed')
     expect(released).toBe(1)
     expect(flushes()).toBe(1)
     expect(compactEvents(session).map(event => event.type)).toEqual(['compaction/start', 'compaction/end'])
@@ -571,7 +600,7 @@ describe('compactNow transaction and failure classification', () => {
       })
     }
 
-    const error = await rejection(compact.compactNow(agent, SIGNAL))
+    const error = await rejection(async () => await runNow(compact, agent, SIGNAL))
     expect(error.code).toBe('changed')
     expect(causeOf(error).message).toContain('span changed during summarization')
   })
@@ -586,7 +615,7 @@ describe('compactNow transaction and failure classification', () => {
     const head = session.surface.nodes[0]!
     const generation = session.surface.replaceGeneration
 
-    const running = compact.compactNow(agent, SIGNAL)
+    const running = startNow(compact, agent, SIGNAL)
     await Promise.resolve()
     expect(compact.calls).toHaveLength(1)
 
@@ -625,7 +654,7 @@ describe('compactNow transaction and failure classification', () => {
       return (append as (...args: never[]) => unknown)(type as never, ...rest)
     }) as never)
 
-    const error = await rejection(compact.compactNow(agent, SIGNAL))
+    const error = await rejection(async () => await runNow(compact, agent, SIGNAL))
     expect(error.code).toBe('commit')
     expect(causeOf(error).message).toBe('boundary rejected')
     vi.restoreAllMocks()
@@ -635,7 +664,7 @@ describe('compactNow transaction and failure classification', () => {
     expect(compactEvents(session).filter(event => event.type === 'compaction/start')).toHaveLength(1)
 
     const calls = compact.calls.length
-    expect((await rejection(compact.compactNow(agent, SIGNAL))).code).toBe('busy')
+    expect((await rejection(async () => await runNow(compact, agent, SIGNAL))).code).toBe('busy')
     expect(compact.calls).toHaveLength(calls)
   })
 
@@ -651,7 +680,7 @@ describe('compactNow transaction and failure classification', () => {
       return (append as (...args: never[]) => unknown)(type as never, ...rest)
     }) as never)
 
-    const error = await rejection(compact.compactNow(agent, SIGNAL))
+    const error = await rejection(async () => await runNow(compact, agent, SIGNAL))
     vi.restoreAllMocks()
     expect(error.code).toBe('commit')
     expect(causeOf(error).message).toBe('error boundary rejected')
@@ -677,7 +706,7 @@ describe('compactNow transaction and failure classification', () => {
       })
     }
 
-    expect((await rejection(compact.compactNow(agent, SIGNAL))).code).toBe('changed')
+    expect((await rejection(async () => await runNow(compact, agent, SIGNAL))).code).toBe('changed')
     vi.restoreAllMocks()
   })
 
@@ -692,7 +721,7 @@ describe('compactNow transaction and failure classification', () => {
       return (append as (...args: never[]) => unknown)(type as never, ...rest)
     }) as never)
 
-    const error = await rejection(compact.compactNow(agent, SIGNAL))
+    const error = await rejection(async () => await runNow(compact, agent, SIGNAL))
     vi.restoreAllMocks()
     expect(error.code).toBe('commit')
     expect(released).toBe(1)
@@ -712,7 +741,7 @@ describe('compactNow transaction and failure classification', () => {
     }) as never)
     vi.spyOn(ctx.sessions, 'flush').mockRejectedValueOnce(new Error('disk full'))
 
-    const error = await rejection(compact.compactNow(agent, SIGNAL))
+    const error = await rejection(async () => await runNow(compact, agent, SIGNAL))
     expect(error.code).toBe('commit')
     expect(causeOf(error).message).toBe('summary record rejected')
     vi.restoreAllMocks()
@@ -729,7 +758,7 @@ describe('compactNow transaction and failure classification', () => {
     }
     const agent = fakeAgent(session, () => () => undefined)
 
-    const result = await compact.compactNow(agent, SIGNAL)
+    const result = await runNow(compact, agent, SIGNAL)
 
     expect(result).not.toBeNull()
     expect(session.snapshotEvents().some(event => event.type === 'turn/start')).toBe(false)
@@ -743,7 +772,7 @@ describe('compactNow transaction and failure classification', () => {
     const agent = fakeAgent(session, () => () => undefined)
     vi.spyOn(ctx.sessions, 'flush').mockRejectedValueOnce(new Error('disk full'))
 
-    expect((await rejection(compact.compactNow(agent, SIGNAL))).code).toBe('persistence')
+    expect((await rejection(async () => await runNow(compact, agent, SIGNAL))).code).toBe('persistence')
     vi.restoreAllMocks()
     expect(session.snapshotEvents().some(event => event.type === 'compaction/summary')).toBe(true)
     const start = session.snapshotEvents().findLast(event => event.type === 'compaction/start')
@@ -770,7 +799,7 @@ describe('compactNow transaction and failure classification', () => {
 
       let thrown: unknown
       try {
-        void compact.compactNow(agent, controller.signal)
+        void startNow(compact, agent, controller.signal).catch(() => {})
       } catch (error: unknown) {
         thrown = error
       }
@@ -793,7 +822,7 @@ describe('compactNow transaction and failure classification', () => {
     compact.duringSummary = () => { controller.abort(reason) }
     compact.error = new Error('summarizer aborted')
 
-    await expect(compact.compactNow(agent, controller.signal)).rejects.toBe(reason)
+    await expect(runNow(compact, agent, controller.signal)).rejects.toBe(reason)
     expect(released).toBe(1)
     expect(flushes()).toBe(1)
     const events = compactEvents(session)
@@ -811,7 +840,7 @@ describe('compactNow transaction and failure classification', () => {
     compact.duringSummary = () => { controller.abort(reason) }
     compact.error = new Error('summarizer observed cancellation')
 
-    const error = await rejection(compact.compactNow(agent, SIGNAL))
+    const error = await rejection(async () => await runNow(compact, agent, SIGNAL))
 
     expect(error.code).toBe('cancelled')
     expect(error.cause).toBe(reason)
@@ -825,7 +854,7 @@ describe('compactNow transaction and failure classification', () => {
     const agent = fakeAgent(session, () => () => undefined)
     compact.duringSummary = () => { controller.abort(reason) }
 
-    await expect(compact.compactNow(agent, controller.signal)).rejects.toBe(reason)
+    await expect(runNow(compact, agent, controller.signal)).rejects.toBe(reason)
     expect(compactEvents(session).map(event => event.type)).toEqual(['compaction/start', 'compaction/end'])
     expect(session.snapshotEvents().some(event => event.type === 'compaction/summary')).toBe(false)
   })
@@ -840,7 +869,7 @@ describe('compactNow transaction and failure classification', () => {
     let released = 0
     const agent = fakeAgent(session, () => () => { released += 1 })
 
-    const running = compact.compactNow(agent, controller.signal)
+    const running = startNow(compact, agent, controller.signal)
     let settled = false
     void running.then(
       () => { settled = true },
@@ -869,7 +898,7 @@ describe('compactNow transaction and failure classification', () => {
     ]
     compact.usage = { inputTokens: 40, outputTokens: 5 }
 
-    await compact.compactNow(agent, SIGNAL)
+    await runNow(compact, agent, SIGNAL)
 
     const summary = session.snapshotEvents().find(event => event.type === 'compaction/summary')
     expect(summary?.type === 'compaction/summary' && summary.data.rawOutput).toEqual(compact.rawOutput)
@@ -886,7 +915,7 @@ describe('compactNow transaction and failure classification', () => {
     try {
       compact.duringSummary = () => { clock.mockReturnValue(openedAt + 25) }
 
-      await compact.compactNow(agent, SIGNAL)
+      await runNow(compact, agent, SIGNAL)
 
       const start = session.snapshotEvents().findLast(event => event.type === 'compaction/start')
       const end = session.snapshotEvents().findLast(event => event.type === 'compaction/end')
@@ -906,7 +935,7 @@ describe('compactNow transaction and failure classification', () => {
     const gate = deferred()
     compact.gate = gate.promise
 
-    const manual = compact.compactNow(agent, SIGNAL)
+    const manual = startNow(compact, agent, SIGNAL)
     await Promise.resolve()
     const nodes = session.surface.nodes
     await expect(compact.compactRegion(
@@ -932,7 +961,7 @@ describe('compactNow transaction and failure classification', () => {
     const region = compact.compactRegion(nodes[0]!, nodes[1]!, agent)
     await Promise.resolve()
 
-    expect((await rejection(compact.compactNow(agent, SIGNAL))).code).toBe('busy')
+    expect((await rejection(async () => await runNow(compact, agent, SIGNAL))).code).toBe('busy')
 
     gate.resolve()
     compact.gate = undefined

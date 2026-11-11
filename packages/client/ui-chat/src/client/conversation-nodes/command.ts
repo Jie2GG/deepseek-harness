@@ -26,11 +26,15 @@ interface CommandState {
   readonly command: CommandNode
   readonly summary?: ConversationMatch
   readonly checkpoint?: ConversationMatch
+  readonly start?: ConversationMatch
+  readonly end?: ConversationMatch
 }
 
 interface CompactionEvidence {
   readonly summary?: ConversationMatch
   readonly checkpoint?: ConversationMatch
+  readonly start?: ConversationMatch
+  readonly end?: ConversationMatch
 }
 
 function commandFromRun(match: ConversationMatch): CommandNode {
@@ -167,6 +171,8 @@ export function updateCompactionState<State extends CompactionEvidence>(
 ): State {
   if (match.event.type === 'compaction/summary') return { ...state, summary: match }
   if (compactSource(match.event) !== undefined) return { ...state, checkpoint: match }
+  if (match.event.type === 'compaction/start') return { ...state, start: match }
+  if (match.event.type === 'compaction/end') return { ...state, end: match }
   return state
 }
 
@@ -210,7 +216,21 @@ export const commandDefinition: ConversationNodeDefinition<CommandState> = {
     const compaction = state.checkpoint === undefined
       ? null
       : compactSummary(state.summary, state.checkpoint)
-    const data: ManualCompactionChatData = { command: state.command, compaction }
+    // The manual command answers at its reservation, so the bracket's own events,
+    // not the command settlement, say whether the attempt is still running or has
+    // failed. A closed bracket that recorded no error found nothing to compact.
+    const attemptError = state.end?.event.type === 'compaction/end' ? state.end.event.data.error : undefined
+    const attempt = compaction !== null || state.start === undefined
+      ? undefined
+      : state.end === undefined
+        ? 'running'
+        : attemptError === undefined ? undefined : 'failed'
+    const data: ManualCompactionChatData = {
+      command: state.command,
+      compaction,
+      ...attempt === undefined ? {} : { attempt },
+      ...attemptError === undefined ? {} : { attemptError },
+    }
     return chatNode(context, 'manual-compaction', compaction?.seq ?? state.command.seq, data)
   },
 }

@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
 import Loader from '@deepseek-ai/cordis-plugin-loader'
 import type { Agent } from '@deepseek-ai/dsh-agent'
@@ -11,11 +11,13 @@ import {
   type CompactionResult,
   type CompactionTrigger,
   type ManualCompactAgentContext,
+  type ManualCompactionStart,
 } from '@deepseek-ai/dsh-compaction'
 import { Session, SessionId, SessionSeq } from '@deepseek-ai/dsh-session'
 import * as commandCompact from '@deepseek-ai/dsh-command-compact'
 
 const COMPACTION_ID = CompactionId('command-compact-test')
+const STARTED = 'Compaction started. It keeps running even if you close this page; the result appears in this conversation. Press Stop to cancel it.'
 
 const RESULT: CompactionResult = {
   compactionId: COMPACTION_ID,
@@ -28,10 +30,15 @@ const RESULT: CompactionResult = {
   shadowedTokenCount: 42,
 }
 
+/** Compaction seam stand-in that answers from its reservation like the real engine. */
 class StubCompactionEngine extends CompactionEngine {
   result: CompactionResult | null = RESULT
+  /** Failure raised while reserving, which the command still answers directly. */
   failure: unknown
-  operation: (() => Promise<CompactionResult | null>) | undefined
+  /** Failure of the reserved operation, which arrives after the command answered. */
+  lateFailure: Error | undefined
+  /** Complete override of the reservation answer. */
+  start: (() => ManualCompactionStart) | undefined
   calls: { agent: ManualCompactAgentContext; signal: AbortSignal }[] = []
 
   override compactIfNeeded(
@@ -50,36 +57,37 @@ class StubCompactionEngine extends CompactionEngine {
     agent: ManualCompactAgentContext,
     signal: AbortSignal,
     sourceCommandId?: Parameters<CompactionEngine['compactNow']>[2],
-  ): Promise<CompactionResult | null> {
+  ): ManualCompactionStart {
     this.calls.push({ agent, signal })
-    if (this.operation !== undefined) return this.operation()
-    return this.failure === undefined
-      ? Promise.resolve(this.result === null ? null : this.appendResult(agent, this.result, sourceCommandId))
-      // oxlint-disable-next-line typescript/prefer-promise-reject-errors -- exercise arbitrary backend rejection values.
-      : Promise.reject(this.failure)
-  }
-
-  private appendResult(
-    agent: ManualCompactAgentContext,
-    result: CompactionResult,
-    sourceCommandId: Parameters<CompactionEngine['compactNow']>[2],
-  ): CompactionResult {
+    if (this.start !== undefined) return this.start()
+    /* v8 ignore next 1 -- exercise arbitrary reservation failures, typed as unknown here. */
+    if (this.failure !== undefined) throw this.failure
+    if (this.result === null) return { kind: 'nothing' }
+    const result = this.result
     const operationIds = {
       compactionId: result.compactionId,
       ...sourceCommandId === undefined ? {} : { sourceCommandId },
     }
-    agent.session.append('compaction/start', { ...operationIds, turn: null })
-    agent.session.append('compaction/summary', {
-      ...operationIds,
-      summary: result.summary,
-      shadowedRange: result.shadowedRange,
-      shadowedSeqs: result.shadowedSeqs,
-      shadowedTokenCount: result.shadowedTokenCount,
-      provider: 'command-test',
-      model: 'command-test',
-    })
-    agent.session.append('compaction/end', { ...operationIds, turn: null })
-    return { ...result, ...operationIds }
+    const done = (async (): Promise<CompactionResult | null> => {
+      agent.session.append('compaction/start', { ...operationIds, turn: null })
+      agent.session.append('compaction/summary', {
+        ...operationIds,
+        summary: result.summary,
+        shadowedRange: result.shadowedRange,
+        shadowedSeqs: result.shadowedSeqs,
+        shadowedTokenCount: result.shadowedTokenCount,
+        provider: 'command-test',
+        model: 'command-test',
+      })
+      const late = this.lateFailure
+      if (late !== undefined) {
+        agent.session.append('compaction/end', { ...operationIds, turn: null, error: late.message })
+        throw late
+      }
+      agent.session.append('compaction/end', { ...operationIds, turn: null })
+      return { ...result, ...operationIds }
+    })()
+    return { kind: 'running', done }
   }
 }
 
@@ -113,6 +121,16 @@ async function run(
   const execution = await test.ctx.commands.execute(test.agent, `/compact${suffix}`, [], controller.signal)
   if (execution === undefined) throw new Error('compact command was not registered')
   return execution
+}
+
+/** Yield until the detached attempt has settled. */
+async function quiesce(): Promise<void> {
+  await new Promise((resolve) => { setTimeout(resolve, 0) })
+}
+
+/** Types the session event list without repeating the narrowing at every read. */
+function sessionTypes(test: Harness): string[] {
+  return test.agent.session.snapshotEvents().map(event => event.type)
 }
 
 /** Assert the executor-owned lifecycle pair and absence from model history. */
@@ -173,17 +191,29 @@ describe('@deepseek-ai/dsh-command-compact registration', () => {
 })
 
 describe('/compact human command', () => {
-  it('reports success with useful accounting and forwards the exact target and signal', async () => {
+  it('answers from the reservation and leaves the durable attempt to the log', async () => {
     const test = await harness()
     const controller = new AbortController()
     const execution = await run(test, '', controller)
-    expect(execution.result).toEqual({
-      kind: 'success',
-      text: 'Compacted 3 history items (~42 tokens).',
-      sourceEventSeq: RESULT.summarySeq,
-    })
+    expect(execution.result).toEqual({ kind: 'success', text: STARTED })
     expect(execution.commandId).toBe(expectLastLifecycle(test, '', execution.result))
-    expect(test.compact.calls).toEqual([{ agent: test.agent, signal: controller.signal }])
+
+    // The operation deliberately does not carry this request's signal: a Client
+    // that goes away mid-summary must not discard work already paid for.
+    expect(test.compact.calls).toHaveLength(1)
+    expect(test.compact.calls[0]?.signal).not.toBe(controller.signal)
+    controller.abort(new Error('client closed'))
+    await quiesce()
+    // The request is gone, yet the carried signal never was.
+    expect(test.compact.calls[0]?.signal.aborted).toBe(false)
+    const attempt = test.agent.session.snapshotEvents().filter(event => event.type.startsWith('compaction/'))
+    expect(attempt.map(event => event.type)).toEqual([
+      'compaction/start',
+      'compaction/summary',
+      'compaction/end',
+    ])
+    const summary = attempt.find(event => event.type === 'compaction/summary')
+    expect(summary?.data).toMatchObject({ shadowedTokenCount: 42, shadowedSeqs: [1, 3, 7] })
   })
 
   it('returns direct no-history and argument-rejection results', async () => {
@@ -195,6 +225,7 @@ describe('/compact human command', () => {
       text: 'No compactable history yet.',
     })
     expect(empty.commandId).toBe(expectLastLifecycle(test, '', empty.result))
+    expect(sessionTypes(test)).not.toContain('compaction/start')
 
     const rejected = await run(test, ' now')
     expect(rejected.result).toEqual({
@@ -212,7 +243,7 @@ describe('/compact human command', () => {
     ['summary', 'Compaction could not produce a useful summary. The attempt is recorded in the session log.'],
     ['commit', 'Compaction did not finish cleanly; some session history may have changed. Inspect the current session state before retrying.'],
     ['persistence', 'Compaction finished, but the session could not be saved.'],
-  ] as const)('maps expected %s failures to direct errors', async (code, text) => {
+  ] as const)('maps an expected %s reservation failure to a direct error', async (code, text) => {
     const test = await harness()
     test.compact.failure = new ManualCompactionError(code, 'backend detail')
     const execution = await run(test)
@@ -220,61 +251,42 @@ describe('/compact human command', () => {
     expect(execution.commandId).toBe(expectLastLifecycle(test, '', execution.result))
   })
 
-  it('preserves cancellation and unexpected implementation failures', async () => {
-    const cancelled = await harness()
-    const controller = new AbortController()
-    const abort = new Error('operator cancelled')
-    cancelled.compact.operation = () => {
-      controller.abort(abort)
-      return Promise.reject(new ManualCompactionError('summary', 'late failure'))
-    }
-    await expect(run(cancelled, '', controller)).rejects.toBe(abort)
-    expectLastLifecycle(cancelled, '', { kind: 'error', text: abort.message })
-
-    const unexpected = await harness()
-    const bug = new Error('unexpected backend bug')
-    unexpected.compact.failure = bug
-    await expect(run(unexpected)).rejects.toBe(bug)
-    expectLastLifecycle(unexpected, '', { kind: 'error', text: bug.message })
+  it('keeps the answered command and logs the failure of a detached attempt', async () => {
+    const test = await harness()
+    const warn = vi.spyOn(test.ctx.logger, 'warn')
+    test.compact.lateFailure = new ManualCompactionError('summary', 'late failure')
+    const execution = await run(test)
+    expect(execution.result).toEqual({ kind: 'success', text: STARTED })
+    await quiesce()
+    expect(warn).toHaveBeenCalledWith(
+      'command-compact: Compaction could not produce a useful summary. The attempt is recorded in the session log.',
+    )
+    expect(sessionTypes(test)).toContain('compaction/end')
   })
 
-  it('drains an aborted handler through close and flush before plugin disposal settles', async () => {
+  it('preserves an unexpected reservation failure as an executor error', async () => {
     const test = await harness()
-    const controller = new AbortController()
-    const abort = new Error('operator cancelled')
-    const started = Promise.withResolvers<undefined>()
-    const allowClose = Promise.withResolvers<undefined>()
-    const closed = Promise.withResolvers<undefined>()
-    const allowFlush = Promise.withResolvers<undefined>()
-    const flushed = Promise.withResolvers<undefined>()
-    test.compact.operation = async () => {
-      started.resolve(undefined)
-      await allowClose.promise
-      closed.resolve(undefined)
-      await allowFlush.promise
-      flushed.resolve(undefined)
-      throw abort
-    }
+    const bug = new Error('unexpected backend bug')
+    test.compact.failure = bug
+    await expect(run(test)).rejects.toBe(bug)
+    expectLastLifecycle(test, '', { kind: 'error', text: bug.message })
+  })
 
-    const execution = run(test, '', controller)
-    await started.promise
-    controller.abort(abort)
-    await expect(execution).rejects.toBe(abort)
+  it('awaits a detached attempt before plugin disposal settles', async () => {
+    const test = await harness()
+    const settle = Promise.withResolvers<CompactionResult | null>()
+    test.compact.start = () => ({ kind: 'running', done: settle.promise })
+    const execution = await run(test)
+    expect(execution.result).toEqual({ kind: 'success', text: STARTED })
 
     let disposed = false
     const disposal = test.plugin.dispose()
     void disposal.then(() => { disposed = true })
-    await new Promise(resolve => setTimeout(resolve, 0))
+    await quiesce()
     expect(test.ctx.commands.find(test.agent, 'compact')).toBeUndefined()
     expect(disposed).toBe(false)
 
-    allowClose.resolve(undefined)
-    await closed.promise
-    await new Promise(resolve => setTimeout(resolve, 0))
-    expect(disposed).toBe(false)
-
-    allowFlush.resolve(undefined)
-    await flushed.promise
+    settle.resolve(null)
     await disposal
     expect(disposed).toBe(true)
   })

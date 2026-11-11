@@ -11,7 +11,7 @@ import {
 import type { CompactionResult, CompactionTrigger } from '@deepseek-ai/dsh-compaction'
 import { Session, SessionId } from '@deepseek-ai/dsh-session'
 import type { SessionSeq } from '@deepseek-ai/dsh-session'
-import type { CompactionAgentContext } from '@deepseek-ai/dsh-compaction'
+import type { CompactionAgentContext, ManualCompactionStart } from '@deepseek-ai/dsh-compaction'
 import type { ManualCompactAgentContext } from '@deepseek-ai/dsh-compaction'
 
 declare module '@deepseek-ai/dsh-llm' {
@@ -39,12 +39,12 @@ class StubCompactionEngine extends CompactionEngine {
     return null
   }
 
-  override async compactNow(
+  override compactNow(
     _agent: ManualCompactAgentContext,
     signal: AbortSignal,
-  ): Promise<CompactionResult | null> {
+  ): ManualCompactionStart {
     this.lastSignal = signal
-    return null
+    return { kind: 'nothing' }
   }
 
   override async compactRegion(
@@ -120,10 +120,10 @@ describe('CompactionEngine seam', () => {
     const session = Session.create(SessionId('s'))
     expect(await svc.compactIfNeeded(stubAgent(session), 'pressure', new AbortController().signal)).toBeNull()
     const signal = new AbortController().signal
-    expect(await svc.compactNow({
+    expect(svc.compactNow({
       ...stubAgent(session),
       runMaintenance: task => task(new AbortController().signal),
-    }, signal)).toBeNull()
+    }, signal).kind).toBe('nothing')
     expect(svc.lastSignal).toBe(signal)
   })
 

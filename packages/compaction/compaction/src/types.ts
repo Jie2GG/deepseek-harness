@@ -118,3 +118,21 @@ export interface CompactionResult {
   /** Estimated token count of the shadowed content. */
   shadowedTokenCount: number
 }
+
+/**
+ * How one explicit manual compaction request started. Reserving the agent's
+ * idle maintenance task and selecting a useful range are decided synchronously,
+ * so the human command that asked for it can answer at once while the durable
+ * attempt runs on without that command's request. Its outcome stays readable
+ * from the session's own `compaction/start` … `compaction/end` marker pair.
+ */
+export type ManualCompactionStart =
+  /**
+   * The idle task is reserved and a useful range is selected. `done` settles
+   * with the committed result when the marker pair closes, or rejects with the
+   * same `ManualCompactionError` a caller that awaited the whole attempt would
+   * have seen.
+   */
+  { readonly kind: 'running'; readonly done: Promise<CompactionResult | null> }
+  /** The idle session had no history worth compacting, and nothing was written. */
+  | { readonly kind: 'nothing' }
