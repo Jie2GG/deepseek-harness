@@ -368,7 +368,7 @@ export class BrowserAuth {
         res.end()
         return false
       }
-      this.writeUnauthorized(req, res)
+      this.writeSignInPage(req, res, secure)
       return false
     }
     if (this.isAuthenticated(req, secure)) return true

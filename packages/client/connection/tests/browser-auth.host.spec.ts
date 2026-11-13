@@ -307,7 +307,7 @@ describe('BrowserAuth', () => {
     expect(String(setUp.state.body)).toContain('not encrypted')
   })
 
-  it('accepts the cookie for index serving and gives every unauthenticated request one response', async () => {
+  it('accepts the cookie for index serving and answers every unauthenticated index request with the sign-in page', async () => {
     const auth = await createAuth(new RecordCredentials())
     const { cookie } = exchange(auth)
     const allowed = response()
@@ -322,15 +322,33 @@ describe('BrowserAuth', () => {
     ]) {
       const denied = response()
       expect(auth.authorizeIndex(candidate, denied.value)).toBe(false)
-      expect(denied.state.status).toBe(401)
+      expect(denied.state.status).toBe(200)
       expect(denied.state.headers).toEqual({
         'cache-control': 'no-store',
-        'content-type': 'text/plain; charset=utf-8',
+        'content-type': 'text/html; charset=utf-8',
+        'referrer-policy': 'no-referrer',
       })
-      expect(denied.state.body).toBe(candidate.method === 'HEAD'
-        ? undefined
-        : 'dsh web authentication required; open the sign-in page.\n')
+      expect(String(denied.state.body)).toContain('<!doctype html>')
+      expect(String(denied.state.body)).toContain('action="auth/setup"')
     }
+  })
+
+  it('drops a stale token for a signed-in browser and answers a guest with the sign-in page', async () => {
+    const store = new RecordCredentials()
+    const auth = await createAuth(store, 30, {}, { username: 'dsh', password: 'long-enough-password' })
+    const { cookie } = exchange(auth)
+
+    const redirected = response()
+    expect(auth.authorizeIndex(request('/?token=stale', '127.0.0.1:3080', { cookie }), redirected.value)).toBe(false)
+    expect(redirected.state).toMatchObject({
+      status: 303,
+      headers: { 'cache-control': 'no-store', location: './', 'referrer-policy': 'no-referrer' },
+    })
+
+    const guest = response()
+    expect(auth.authorizeIndex(request('/index.html?token=stale'), guest.value)).toBe(false)
+    expect(guest.state.status).toBe(200)
+    expect(String(guest.state.body)).toContain('action="auth/login"')
   })
 
   it('rejects tampering, expiry, future issuance, and a longer lifetime than configured', async () => {
