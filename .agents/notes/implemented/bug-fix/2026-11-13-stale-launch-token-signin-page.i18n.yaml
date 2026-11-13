@@ -1,0 +1,22 @@
+# Bilingual-pair consistency record for 2026-11-13-stale-launch-token-signin-page.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write .agents/notes/implemented/bug-fix/2026-11-13-stale-launch-token-signin-page.md
+/agent-note-a-stale-launch-token-answers-with-the-sign-in-page:
+  en: 172d122d6d184d93
+  zh: 4618224355855546
+/agent-note-a-stale-launch-token-answers-with-the-sign-in-page/problem:
+  en: 3c0abb31db180e2e
+  zh: 584b8ccd3e413680
+/agent-note-a-stale-launch-token-answers-with-the-sign-in-page/decision:
+  en: 86850442df30a395
+  zh: 6852f547bc043f1c
+/agent-note-a-stale-launch-token-answers-with-the-sign-in-page/alternatives-considered:
+  en: c4bcf27ebcda2230
+  zh: b719374c060dc953
+/agent-note-a-stale-launch-token-answers-with-the-sign-in-page/consequences:
+  en: e55792c30f65e276
+  zh: b121665831510c10
+/agent-note-a-stale-launch-token-answers-with-the-sign-in-page/testing:
+  en: 013d7b8b9036c171
+  zh: e57fe45a01a1a38d
